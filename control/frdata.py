@@ -447,6 +447,10 @@ second has %i." % (self.noutputs, other.noutputs))
             else:
                 out = self.fresp[:, :, elements]
         else:
+            if np.min(omega_array) < np.min (self.omega) or np.max(omega_array) > np.max (self.omega):
+                warn("Some of the requested frequencies are outside the convex hull"
+                     " of given (measured) frequencies and require extrapolation."
+                     " Results might not be meaningful!")
             out = empty((self.noutputs, self.ninputs, len(omega_array)),
                         dtype=complex)
             for i in range(self.noutputs):
@@ -512,6 +516,43 @@ second has %i." % (self.noutputs, other.noutputs))
             return self.eval(np.asarray(s).imag, squeeze=squeeze)
         else:
             return self.eval(complex(s).imag, squeeze=squeeze)
+
+    def __getitem__(self, key):
+        key1, key2 = key
+
+        # pre-process
+        if isinstance(key1, int):
+            key1 = slice(key1, key1 + 1, 1)
+        if isinstance(key2, int):
+            key2 = slice(key2, key2 + 1, 1)
+        # dim1
+        start1, stop1, step1 = key1.start, key1.stop, key1.step
+        if step1 is None:
+            step1 = 1
+        if start1 is None:
+            start1 = 0
+        if stop1 is None:
+            stop1 = len(self.num)
+        # dim1
+        start2, stop2, step2 = key2.start, key2.stop, key2.step
+        if step2 is None:
+            step2 = 1
+        if start2 is None:
+            start2 = 0
+        if stop2 is None:
+            stop2 = len(self.num[0])
+
+        resp = self.fresp[key1, key2,:]
+        omega = self.omega
+        # for i in range(start1, stop1, step1):
+        #     num_i = []
+        #     den_i = []
+        #     for j in range(start2, stop2, step2):
+        #         num_i.append(self.num[i][j])
+        #         den_i.append(self.den[i][j])
+        #     num.append(num_i)
+        #     den.append(den_i)
+        return FrequencyResponseData(resp, omega, smooth=(self.ifunc is not None))
 
     def freqresp(self, omega):
         """(deprecated) Evaluate transfer function at complex frequencies.
