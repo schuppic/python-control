@@ -594,6 +594,14 @@ second has %i." % (self.noutputs, other.noutputs))
 
         return FRD(fresp, other.omega, smooth=(self.ifunc is not None))
 
+    def bode_plot(self, plot=True, omega_limits=None, omega_num=None,
+                  margins=None, method='best', *args, **kwargs):
+        '''Shorthand for control.bode_plot(self, self.omega, **kwargs)'''
+        #import at top would couse circular imports
+        from . import freqplot
+        freqplot.bode_plot(self, self.omega,plot=True, omega_limits=None, omega_num=None,
+                  margins=None, method='best', *args, **kwargs)
+
 #
 # Allow FRD as an alias for the FrequencyResponseData class
 #
