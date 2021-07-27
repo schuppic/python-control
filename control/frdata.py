@@ -532,7 +532,7 @@ second has %i." % (self.noutputs, other.noutputs))
         if start1 is None:
             start1 = 0
         if stop1 is None:
-            stop1 = len(self.num)
+            stop1 = self.noutputs
         # dim1
         start2, stop2, step2 = key2.start, key2.stop, key2.step
         if step2 is None:
@@ -540,7 +540,7 @@ second has %i." % (self.noutputs, other.noutputs))
         if start2 is None:
             start2 = 0
         if stop2 is None:
-            stop2 = len(self.num[0])
+            stop2 = self.ninputs
 
         resp = self.fresp[key1, key2,:]
         omega = self.omega
