@@ -602,6 +602,38 @@ second has %i." % (self.noutputs, other.noutputs))
         freqplot.bode_plot(self, self.omega,plot=True, omega_limits=None, omega_num=None,
                   margins=None, method='best', *args, **kwargs)
 
+    def inv(self):
+        ''' return inverse'''
+        fresp_inv = np.zeros_like(self.fresp)
+        for w in range(len(self.omega)):
+            fresp_inv[:,:,w] = np.linalg.inv(self.fresp[:,:,w])
+        return FRD(fresp_inv, self.omega,
+                   smooth=(self.ifunc is not None))
+    @classmethod
+    def block_diag(cls, frds):
+        ''' assemble given frds in a block diagonal frd'''
+        assert isinstance(frds, list)
+        for frd in frds:
+            assert isinstance(frd, cls)
+
+        ninputs = sum([frd.ninputs for frd in frds])
+        noutputs = sum([frd.outputs for frd in frds])
+        omega = frds[0].omega
+        assert all([np.all(frd.omega == omega) for frd in frds])
+        nomega = omega.shape[0]
+
+        H = np.zeros((noutputs, ninputs, nomega), dtype=complex)
+        i_in_start = 0
+        i_out_start = 0
+        for frd in frds:
+            i_in_end = i_in_start + frd.ninputs
+            i_out_end = i_out_start + frd.noutputs
+            H[i_out_start:i_out_end, i_in_start:i_in_end, :] = frd.fresp
+            i_in_start = i_in_end
+            i_out_start = i_out_end
+
+        return cls(H, omega)
+
 #
 # Allow FRD as an alias for the FrequencyResponseData class
 #
