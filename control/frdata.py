@@ -620,6 +620,36 @@ second has %i." % (self.noutputs, other.noutputs))
 
         return cls(H, omega)
 
+    @classmethod
+    def assemble(cls, frds):
+        ''' frds is list of list of frds to be assembled to one frd'''
+        if not isinstance(frds, list):
+            raise ValueError("frds must be list of list of control.FRD()")
+        elif not all([isinstance(li, list) for li in frds]):
+            raise ValueError("frds must be list of list of control.FRD()")
+        elif not all([all([isinstance(e, FRD) for e in li])] for li in frds):
+            raise ValueError("frds must be list of list of control.FRD()")
+
+        nin = sum([frd.ninputs for frd in frds[0]])
+        nout = sum([frd.noutputs for frd in [li[0] for li in frds]])
+        omega = frds[0][0].omega
+        # TODO: check consistency (ninputs, noutputs,...)
+        fresp = np.zeros((nout, nin, len(omega)),dtype=complex)
+        try:
+            out_index = 0
+            for row in frds:
+                in_index = 0
+                for e in row:
+                    if not np.all(e.omega == omega):
+                        raise ValueError("frequencies of provided FRDs do not match")
+                    fresp[out_index:out_index + e.noutputs, in_index:in_index+e.ninputs,:] = e.fresp
+                    in_index += e.ninputs
+                out_index += e.noutputs
+        except:
+            raise ValueError("provided frds are not consistent")
+
+        return FRD(fresp, omega)
+
 #
 # Allow FRD as an alias for the FrequencyResponseData class
 #
