@@ -440,7 +440,8 @@ second has %i." % (self.noutputs, other.noutputs))
 
         if self.ifunc is None:
             elements = np.isin(self.omega, omega)  # binary array
-            if sum(elements) < len(omega_array):
+            # if not np.all(np.isin(omega, self.omega)):
+            if elements.sum() < len(omega_array):
                 raise ValueError(
                     "not all frequencies omega are in frequency list of FRD "
                     "system. Try an interpolating FRD for additional points.")
