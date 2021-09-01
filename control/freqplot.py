@@ -66,6 +66,7 @@ _freqplot_defaults = {
     'freqplot.dB': False,  # Plot gain in dB
     'freqplot.deg': True,  # Plot phase in degrees
     'freqplot.Hz': False,  # Plot frequency in Hertz
+    'freqplot.xscale': 'log', #Plot frequency on log scale
     'freqplot.grid': True,  # Turn on grid for gain and phase
     'freqplot.wrap_phase': False,  # Wrap the phase plot at a given value
 
@@ -613,6 +614,12 @@ def bode_plot(syslist, omega=None,
         'freqplot', 'deg', kwargs, _freqplot_defaults, pop=True)
     Hz = config._get_param(
         'freqplot', 'Hz', kwargs, _freqplot_defaults, pop=True)
+    xscale = config._get_param(
+        'freqplot', 'xscale', kwargs, _freqplot_defaults, pop=True)
+    if xscale not in ['linear', 'log']:
+        import warnings
+        warnings.warn('xscale parameter must be either log or linear. Using default: log.')
+        xscale = 'log'
     grid = config._get_param(
         'freqplot', 'grid', kwargs, _freqplot_defaults, pop=True)
     plot = config._get_param('freqplot', 'plot', plot, True)
@@ -763,12 +770,18 @@ def bode_plot(syslist, omega=None,
                 #
                 # Magnitude plot
                 #
+                ax_mag.set_xscale(xscale)
 
                 if dB:
-                    ax_mag.semilogx(omega_plot, 20 * np.log10(mag_plot),
+                    # ax_mag.semilogx(omega_plot, 20 * np.log10(mag_plot),
+                    #                 *args, **kwargs)
+                    ax_mag.plot(omega_plot, 20 * np.log10(mag_plot),
                                     *args, **kwargs)
                 else:
-                    ax_mag.loglog(omega_plot, mag_plot, *args, **kwargs)
+                    # ax_mag.loglog(omega_plot, mag_plot, *args, **kwargs)
+                    ax_mag.set_yscale('log')
+                    ax_mag.plot(omega_plot, mag_plot, *args, **kwargs)
+
 
                 # Add a grid to the plot + labeling
                 ax_mag.grid(grid and not margins, which='both')
@@ -777,9 +790,10 @@ def bode_plot(syslist, omega=None,
                 #
                 # Phase plot
                 #
-
+                ax_phase.set_xscale(xscale)
                 # Plot the data
-                ax_phase.semilogx(omega_plot, phase_plot, *args, **kwargs)
+                # ax_phase.semilogx(omega_plot, phase_plot, *args, **kwargs)
+                ax_phase.plot(omega_plot, phase_plot, *args, **kwargs)
 
                 # Show the phase and gain margins in the plot
                 if margins:
@@ -810,27 +824,27 @@ def bode_plot(syslist, omega=None,
                     # Annotate the phase margin (if it exists)
                     if pm != float('inf') and Wcp != float('nan'):
                         if dB:
-                            ax_mag.semilogx(
+                            ax_mag.plot(
                                 [Wcp, Wcp], [0., -1e5],
                                 color='k', linestyle=':', zorder=-20)
                         else:
-                            ax_mag.loglog(
+                            ax_mag.plot(
                                 [Wcp, Wcp], [1., 1e-8],
                                 color='k', linestyle=':', zorder=-20)
 
                         if deg:
-                            ax_phase.semilogx(
+                            ax_phase.plot(
                                 [Wcp, Wcp], [1e5, phase_limit + pm],
                                 color='k', linestyle=':', zorder=-20)
-                            ax_phase.semilogx(
+                            ax_phase.plot(
                                 [Wcp, Wcp], [phase_limit + pm, phase_limit],
                                 color='k', zorder=-20)
                         else:
-                            ax_phase.semilogx(
+                            ax_phase.plot(
                                 [Wcp, Wcp], [1e5, math.radians(phase_limit) +
                                              math.radians(pm)],
                                 color='k', linestyle=':', zorder=-20)
-                            ax_phase.semilogx(
+                            ax_phase.plot(
                                 [Wcp, Wcp], [math.radians(phase_limit) +
                                              math.radians(pm),
                                              math.radians(phase_limit)],
@@ -839,25 +853,25 @@ def bode_plot(syslist, omega=None,
                     # Annotate the gain margin (if it exists)
                     if gm != float('inf') and Wcg != float('nan'):
                         if dB:
-                            ax_mag.semilogx(
+                            ax_mag.plot(
                                 [Wcg, Wcg], [-20.*np.log10(gm), -1e5],
                                 color='k', linestyle=':', zorder=-20)
-                            ax_mag.semilogx(
+                            ax_mag.plot(
                                 [Wcg, Wcg], [0, -20*np.log10(gm)],
                                 color='k', zorder=-20)
                         else:
-                            ax_mag.loglog(
+                            ax_mag.plot(
                                 [Wcg, Wcg], [1./gm, 1e-8], color='k',
                                 linestyle=':', zorder=-20)
-                            ax_mag.loglog(
+                            ax_mag.plot(
                                 [Wcg, Wcg], [1., 1./gm], color='k', zorder=-20)
 
                         if deg:
-                            ax_phase.semilogx(
+                            ax_phase.plot(
                                 [Wcg, Wcg], [0, phase_limit],
                                 color='k', linestyle=':', zorder=-20)
                         else:
-                            ax_phase.semilogx(
+                            ax_phase.plot(
                                 [Wcg, Wcg], [0, math.radians(phase_limit)],
                                 color='k', linestyle=':', zorder=-20)
 
