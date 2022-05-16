@@ -287,6 +287,9 @@ second has %i." % (self.noutputs, other.noutputs))
         if isinstance(other, (int, float, complex, np.number)):
             return FRD(self.fresp * other, self.omega,
                        smooth=(self.ifunc is not None))
+        elif isinstance(other, np.ndarray) and other.ndim == 2 and other.shape[0] == self.ninputs:
+            return FRD(np.moveaxis(np.moveaxis(self.fresp, -1, 0)@other, 0, -1), self.omega,
+                       smooth=(self.ifunc is not None))
         else:
             other = _convert_to_FRD(other, omega=self.omega)
 
@@ -313,6 +316,9 @@ second has %i." % (self.noutputs, other.noutputs))
         # Convert the second argument to an frd function.
         if isinstance(other, (int, float, complex, np.number)):
             return FRD(self.fresp * other, self.omega,
+                       smooth=(self.ifunc is not None))
+        elif isinstance(other, np.ndarray) and other.ndim == 2 and other.shape[1] == self.noutputs:
+            return FRD(np.moveaxis(other @ np.moveaxis(self.fresp, -1, 0), 0, -1), self.omega,
                        smooth=(self.ifunc is not None))
         else:
             other = _convert_to_FRD(other, omega=self.omega)
