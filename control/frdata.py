@@ -251,19 +251,22 @@ class FrequencyResponseData(LTI):
                 warn("Frequency points do not match; expect "
                      "truncation and interpolation.")
 
-        # Convert the second argument to a frequency response function.
-        # or re-base the frd to the current omega (if needed)
-        other = _convert_to_FRD(other, omega=self.omega)
+        try:
+            # Convert the second argument to a frequency response function.
+            # or re-base the frd to the current omega (if needed)
+            other = _convert_to_FRD(other, omega=self.omega)
 
-        # Check that the input-output sizes are consistent.
-        if self.ninputs != other.ninputs:
-            raise ValueError("The first summand has %i input(s), but the \
-second has %i." % (self.ninputs, other.ninputs))
-        if self.noutputs != other.noutputs:
-            raise ValueError("The first summand has %i output(s), but the \
-second has %i." % (self.noutputs, other.noutputs))
+            # Check that the input-output sizes are consistent.
+            if self.ninputs != other.ninputs:
+                raise ValueError("The first summand has %i input(s), but the \
+    second has %i." % (self.ninputs, other.ninputs))
+            if self.noutputs != other.noutputs:
+                raise ValueError("The first summand has %i output(s), but the \
+    second has %i." % (self.noutputs, other.noutputs))
 
-        return FRD(self.fresp + other.fresp, other.omega)
+            return FRD(self.fresp + other.fresp, other.omega)
+        except TypeError:
+            return NotImplemented # conversion to frd not successful
 
     def __radd__(self, other):
         """Right add two LTI objects (parallel connection)."""
@@ -602,6 +605,46 @@ second has %i." % (self.noutputs, other.noutputs))
             fresp_inv[:,:,w] = np.linalg.inv(self.fresp[:,:,w])
         return FRD(fresp_inv, self.omega,
                    smooth=(self.ifunc is not None))
+
+    def pseudo_inv(self):
+        ''' return inverse'''
+        fresp_inv = np.zeros_like(self.fresp)
+        for w in range(len(self.omega)):
+            fresp_inv[:, :, w] = np.linalg.pinv(self.fresp[:, :, w])
+        return FRD(fresp_inv, self.omega,
+                   smooth=(self.ifunc is not None))
+        # if self.noutputs > self.ninputs:
+        #     return (self.transpose() * self).inv() * self.transpose()
+        # elif self.ninputs > self.noutputs:
+        #     return self.transpose()*(self * self.transpose()).inv()
+        # else:
+        #     return self.inv()
+
+    def transpose(self):
+        ''' return transpose'''
+        fresp_tp = np.swapaxes(self.fresp, 0, 1)
+        return FRD(fresp_tp, self.omega,
+                   smooth=(self.ifunc is not None))
+
+    def conj(self):
+        ''' return complex conjugate'''
+        return FRD(np.conjugate(self.fresp), self.omega,
+                   smooth=(self.ifunc is not None))
+
+    def sqrt(self):
+        ''' return square root'''
+        return FRD(np.sqrt(self.fresp), self.omega,
+                   smooth=(self.ifunc is not None))
+    @classmethod
+    def solve(cls, A, b):
+        """ returns the more accurate version of A^-1 * b"""
+        fresp_res = np.zeros((A.ninputs, b.noutputs, A.fresp.shape[-1]), dtype=np.complex)
+        for w in range(len(A.omega)):
+            fresp_res[:, :, w] = np.linalg.solve(A.fresp[:, :, w], b.fresp[:, :, w])
+            # fresp_res[:, :, w], _, _, _ = np.linalg.lstsq(A.fresp[:, :, w], b.fresp[:, :, w])
+        return FRD(fresp_res, A.omega,
+                   smooth=(A.ifunc is not None))
+
     @classmethod
     def block_diag(cls, frds):
         ''' assemble given frds in a block diagonal frd'''
