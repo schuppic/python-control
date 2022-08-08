@@ -55,12 +55,14 @@ from .lti import *
 from .margins import *
 from .mateqn import *
 from .modelsimp import *
+from .namedio import *
 from .nichols import *
 from .phaseplot import *
 from .pzmap import *
 from .rlocus import *
 from .statefbk import *
 from .statesp import *
+from .stochsys import *
 from .timeresp import *
 from .xferfcn import *
 from .ctrlutil import *
@@ -70,6 +72,7 @@ from .robust import *
 from .config import *
 from .sisotool import *
 from .iosys import *
+from .passivity import *
 
 # Exceptions
 from .exception import *

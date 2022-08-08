@@ -7,10 +7,6 @@ that operate on transfer functions.  This is the primary representation
 for the python-control library.
 """
 
-# Python 3 compatibility (needs to go here)
-from __future__ import print_function
-from __future__ import division
-
 """Copyright (c) 2010 by California Institute of Technology
 All rights reserved.
 
@@ -63,7 +59,10 @@ from copy import deepcopy
 from warnings import warn
 from itertools import chain
 from re import sub
-from .lti import LTI, common_timebase, isdtime, _process_frequency_response
+from .lti import LTI, _process_frequency_response
+from .namedio import common_timebase, isdtime, _process_namedio_keywords
+from .exception import ControlMIMONotImplemented
+from .frdata import FrequencyResponseData
 from . import config
 
 __all__ = ['TransferFunction', 'tf', 'ss2tf', 'tfdata']
@@ -164,13 +163,22 @@ class TransferFunction(LTI):
         (continuous or discrete).
 
         """
-        args = deepcopy(args)
+        #
+        # Process positional arguments
+        #
         if len(args) == 2:
             # The user provided a numerator and a denominator.
-            (num, den) = args
+            num, den = args
+
         elif len(args) == 3:
             # Discrete time transfer function
-            (num, den, dt) = args
+            num, den, dt = args
+            if 'dt' in kwargs:
+                warn("received multiple dt arguments, "
+                     "using positional arg dt = %s" % dt)
+            kwargs['dt'] = dt
+            args = args[:-1]
+
         elif len(args) == 1:
             # Use the copy constructor.
             if not isinstance(args[0], TransferFunction):
@@ -179,43 +187,68 @@ class TransferFunction(LTI):
                                 % type(args[0]))
             num = args[0].num
             den = args[0].den
+
         else:
-            raise ValueError("Needs 1, 2 or 3 arguments; received %i."
+            raise TypeError("Needs 1, 2 or 3 arguments; received %i."
                              % len(args))
 
         num = _clean_part(num)
         den = _clean_part(den)
 
-        inputs = len(num[0])
-        outputs = len(num)
+        #
+        # Process keyword arguments
+        #
 
+        # Determine if the transfer function is static (needed for dt)
+        static = True
+        for col in num + den:
+            for poly in col:
+                if len(poly) > 1:
+                    static = False
+
+        defaults = args[0] if len(args) == 1 else \
+            {'inputs': len(num[0]), 'outputs': len(num)}
+
+        name, inputs, outputs, states, dt = _process_namedio_keywords(
+                kwargs, defaults, static=static, end=True)
+        if states:
+            raise TypeError(
+                "states keyword not allowed for transfer functions")
+
+        # Initialize LTI (NamedIOSystem) object
+        super().__init__(
+            name=name, inputs=inputs, outputs=outputs, dt=dt)
+
+        #
+        # Check to make sure everything is consistent
+        #
         # Make sure numerator and denominator matrices have consistent sizes
-        if inputs != len(den[0]):
+        if self.ninputs != len(den[0]):
             raise ValueError(
                 "The numerator has %i input(s), but the denominator has "
-                "%i input(s)." % (inputs, len(den[0])))
-        if outputs != len(den):
+                "%i input(s)." % (self.ninputs, len(den[0])))
+        if self.noutputs != len(den):
             raise ValueError(
                 "The numerator has %i output(s), but the denominator has "
-                "%i output(s)." % (outputs, len(den)))
+                "%i output(s)." % (self.noutputs, len(den)))
 
         # Additional checks/updates on structure of the transfer function
-        for i in range(outputs):
+        for i in range(self.noutputs):
             # Make sure that each row has the same number of columns
-            if len(num[i]) != inputs:
+            if len(num[i]) != self.ninputs:
                 raise ValueError(
                     "Row 0 of the numerator matrix has %i elements, but row "
-                    "%i has %i." % (inputs, i, len(num[i])))
-            if len(den[i]) != inputs:
+                    "%i has %i." % (self.ninputs, i, len(num[i])))
+            if len(den[i]) != self.ninputs:
                 raise ValueError(
                     "Row 0 of the denominator matrix has %i elements, but row "
-                    "%i has %i." % (inputs, i, len(den[i])))
+                    "%i has %i." % (self.ninputs, i, len(den[i])))
 
             # Check for zeros in numerator or denominator
             # TODO: Right now these checks are only done during construction.
             # It might be worthwhile to think of a way to perform checks if the
             # user modifies the transfer function after construction.
-            for j in range(inputs):
+            for j in range(self.ninputs):
                 # Check that we don't have any zero denominators.
                 zeroden = True
                 for k in den[i][j]:
@@ -236,36 +269,15 @@ class TransferFunction(LTI):
                 if zeronum:
                     den[i][j] = ones(1)
 
-        LTI.__init__(self, inputs, outputs)
+        # Store the numerator and denominator
         self.num = num
         self.den = den
 
+        #
+        # Final processing
+        #
+        # Truncate leading zeros
         self._truncatecoeff()
-
-        # get dt
-        if len(args) == 2:
-            # no dt given in positional arguments
-            if 'dt' in kwargs:
-                dt = kwargs['dt']
-            elif self._isstatic():
-                dt = None
-            else:
-                dt = config.defaults['control.default_dt']
-        elif len(args) == 3:
-            # Discrete time transfer function
-            if 'dt' in kwargs:
-                warn('received multiple dt arguments, '
-                     'using positional arg dt=%s' % dt)
-        elif len(args) == 1:
-            # TODO: not sure this can ever happen since dt is always present
-            try:
-                dt = args[0].dt
-            except AttributeError:
-                if self._isstatic():
-                    dt = None
-                else:
-                    dt = config.defaults['control.default_dt']
-        self.dt = dt
 
     #
     # Class attributes
@@ -526,6 +538,12 @@ class TransferFunction(LTI):
         """Add two LTI objects (parallel connection)."""
         from .statesp import StateSpace
 
+        # Check to see if the right operator has priority
+        if getattr(other, '__array_priority__', None) and \
+           getattr(self, '__array_priority__', None) and \
+           other.__array_priority__ > self.__array_priority__:
+            return other.__radd__(self)
+
         # Convert the second argument to a transfer function.
         if isinstance(other, StateSpace):
             other = _convert_to_transfer_function(other)
@@ -571,6 +589,12 @@ class TransferFunction(LTI):
 
     def __mul__(self, other):
         """Multiply two LTI objects (serial connection)."""
+        # Check to see if the right operator has priority
+        if getattr(other, '__array_priority__', None) and \
+           getattr(self, '__array_priority__', None) and \
+           other.__array_priority__ > self.__array_priority__:
+            return other.__rmul__(self)
+
         # Convert the second argument to a transfer function.
         if isinstance(other, (int, float, complex, np.number)):
             other = _convert_to_transfer_function(other, inputs=self.ninputs,
@@ -768,15 +792,15 @@ class TransferFunction(LTI):
              "MATLAB compatibility module instead", DeprecationWarning)
         return self.frequency_response(omega)
 
-    def pole(self):
+    def poles(self):
         """Compute the poles of a transfer function."""
         _, den, denorder = self._common_den(allow_nonproper=True)
         rts = []
         for d, o in zip(den, denorder):
             rts.extend(roots(d[:o + 1]))
-        return np.array(rts)
+        return np.array(rts).astype(complex)
 
-    def zero(self):
+    def zeros(self):
         """Compute the zeros of a transfer function."""
         if self.ninputs > 1 or self.noutputs > 1:
             raise NotImplementedError(
@@ -784,7 +808,7 @@ class TransferFunction(LTI):
                 "for SISO systems.")
         else:
             # for now, just give zeros of a SISO tf
-            return roots(self.num[0][0])
+            return roots(self.num[0][0]).astype(complex)
 
     def feedback(self, other=1, sign=-1):
         """Feedback interconnection between two LTI objects."""
@@ -793,9 +817,9 @@ class TransferFunction(LTI):
         if (self.ninputs > 1 or self.noutputs > 1 or
                 other.ninputs > 1 or other.noutputs > 1):
             # TODO: MIMO feedback
-            raise NotImplementedError(
-                "TransferFunction.feedback is currently only implemented "
-                "for SISO functions.")
+            raise ControlMIMONotImplemented(
+                "TransferFunction.feedback is currently not implemented for "
+                "MIMO systems.")
         dt = common_timebase(self.dt, other.dt)
 
         num1 = self.num[0][0]
@@ -1085,12 +1109,10 @@ class TransferFunction(LTI):
             * euler: Euler (or forward difference) method ("gbt" with alpha=0)
             * backward_diff: Backwards difference ("gbt" with alpha=1.0)
             * zoh: zero-order hold (default)
-
         alpha : float within [0, 1]
             The generalized bilinear transformation weighting parameter, which
             should only be specified with method="gbt", and is ignored
-            otherwise.
-
+            otherwise. See :func:`scipy.signal.cont2discrete`.
         prewarp_frequency : float within [0, infinity)
             The frequency [rad/s] at which to match with the input continuous-
             time system's magnitude and phase (the gain=1 crossover frequency,
@@ -1100,7 +1122,7 @@ class TransferFunction(LTI):
         Returns
         -------
         sysd : TransferFunction system
-            Discrete time system, with sampling rate Ts
+            Discrete time system, with sample period Ts
 
         Notes
         -----
@@ -1117,7 +1139,7 @@ class TransferFunction(LTI):
         if not self.isctime():
             raise ValueError("System must be continuous time system")
         if not self.issiso():
-            raise NotImplementedError("MIMO implementation not available")
+            raise ControlMIMONotImplemented("Not implemented for MIMO systems")
         if method == "matched":
             return _c2d_matched(self, Ts)
         sys = (self.num[0][0], self.den[0][0])
@@ -1225,10 +1247,9 @@ def _c2d_matched(sysC, Ts):
     sysDnum, sysDden = zpk2tf(zzeros, zpoles, gain)
     return TransferFunction(sysDnum, sysDden, Ts)
 
+
 # Utility function to convert a transfer function polynomial to a string
 # Borrowed from poly1d library
-
-
 def _tf_polynomial_to_string(coeffs, var='s'):
     """Convert a transfer function polynomial to a string"""
 
@@ -1301,7 +1322,7 @@ def _add_siso(num1, den1, num2, den2):
     return num, den
 
 
-def _convert_to_transfer_function(sys, **kw):
+def _convert_to_transfer_function(sys, inputs=1, outputs=1):
     """Convert a system to transfer function form (if needed).
 
     If sys is already a transfer function, then it is returned.  If sys is a
@@ -1318,6 +1339,9 @@ def _convert_to_transfer_function(sys, **kw):
     If sys is an array-like type, then it is converted to a constant-gain
     transfer function.
 
+    Note: no renaming of inputs and outputs is performed; this should be done
+    by the calling function.
+
     >>> sys = _convert_to_transfer_function([[1., 0.], [2., 3.]])
 
     In this example, the numerator matrix will be
@@ -1326,15 +1350,12 @@ def _convert_to_transfer_function(sys, **kw):
 
     """
     from .statesp import StateSpace
+    kwargs = {}
 
     if isinstance(sys, TransferFunction):
-        if len(kw):
-            raise TypeError("If sys is a TransferFunction, " +
-                            "_convertToTransferFunction cannot take keywords.")
-
         return sys
-    elif isinstance(sys, StateSpace):
 
+    elif isinstance(sys, StateSpace):
         if 0 == sys.nstates:
             # Slycot doesn't like static SS->TF conversion, so handle
             # it first.  Can't join this with the no-Slycot branch,
@@ -1345,14 +1366,9 @@ def _convert_to_transfer_function(sys, **kw):
                    for i in range(sys.noutputs)]
         else:
             try:
-                from slycot import tb04ad
-                if len(kw):
-                    raise TypeError(
-                        "If sys is a StateSpace, " +
-                        "_convertToTransferFunction cannot take keywords.")
-
                 # Use Slycot to make the transformation
                 # Make sure to convert system matrices to numpy arrays
+                from slycot import tb04ad
                 tfout = tb04ad(
                     sys.nstates, sys.ninputs, sys.noutputs, array(sys.A),
                     array(sys.B), array(sys.C), array(sys.D), tol1=0.0)
@@ -1373,7 +1389,8 @@ def _convert_to_transfer_function(sys, **kw):
             except ImportError:
                 # If slycot is not available, use signal.lti (SISO only)
                 if sys.ninputs != 1 or sys.noutputs != 1:
-                    raise TypeError("No support for MIMO without slycot.")
+                    raise ControlMIMONotImplemented("Not implemented for " +
+                        "MIMO systems without slycot.")
 
                 # Do the conversion using sp.signal.ss2tf
                 # Note that this returns a 2D array for the numerator
@@ -1381,22 +1398,19 @@ def _convert_to_transfer_function(sys, **kw):
                 num = squeeze(num)  # Convert to 1D array
                 den = squeeze(den)  # Probably not needed
 
-        return TransferFunction(num, den, sys.dt)
+        return TransferFunction(
+            num, den, sys.dt, inputs=sys.input_labels,
+            outputs=sys.output_labels)
 
     elif isinstance(sys, (int, float, complex, np.number)):
-        if "inputs" in kw:
-            inputs = kw["inputs"]
-        else:
-            inputs = 1
-        if "outputs" in kw:
-            outputs = kw["outputs"]
-        else:
-            outputs = 1
-
         num = [[[sys] for j in range(inputs)] for i in range(outputs)]
         den = [[[1] for j in range(inputs)] for i in range(outputs)]
 
-        return TransferFunction(num, den)
+        return TransferFunction(
+            num, den, inputs=inputs, outputs=outputs)
+
+    elif isinstance(sys, FrequencyResponseData):
+        raise TypeError("Can't convert given FRD to TransferFunction system.")
 
     # If this is array-like, try to create a constant feedthrough
     try:
@@ -1405,6 +1419,7 @@ def _convert_to_transfer_function(sys, **kw):
         num = [[[D[i, j]] for j in range(inputs)] for i in range(outputs)]
         den = [[[1] for j in range(inputs)] for i in range(outputs)]
         return TransferFunction(num, den)
+
     except Exception:
         raise TypeError("Can't convert given type to TransferFunction system.")
 
@@ -1454,6 +1469,16 @@ def tf(*args, **kwargs):
     out: :class:`TransferFunction`
         The new linear system
 
+    Other Parameters
+    ----------------
+    inputs, outputs : str, or list of str, optional
+        List of strings that name the individual signals of the transformed
+        system.  If not given, the inputs and outputs are the same as the
+        original system.
+    name : string, optional
+        System name. If unspecified, a generic name <sys[id]> is generated
+        with a unique integer id.
+
     Raises
     ------
     ValueError
@@ -1500,19 +1525,26 @@ def tf(*args, **kwargs):
 
     if len(args) == 2 or len(args) == 3:
         return TransferFunction(*args, **kwargs)
-    elif len(args) == 1:
+
+    elif len(args) == 1 and isinstance(args[0], str):
+        # Make sure there were no extraneous keywords
+        if kwargs:
+            raise TypeError("unrecognized keywords: ", str(kwargs))
+
         # Look for special cases defining differential/delay operator
         if args[0] == 's':
             return TransferFunction.s
         elif args[0] == 'z':
             return TransferFunction.z
 
+    elif len(args) == 1:
         from .statesp import StateSpace
         sys = args[0]
         if isinstance(sys, StateSpace):
-            return ss2tf(sys)
+            return ss2tf(sys, **kwargs)
         elif isinstance(sys, TransferFunction):
-            return deepcopy(sys)
+            # Use copy constructor
+            return TransferFunction(sys, **kwargs)
         else:
             raise TypeError("tf(sys): sys must be a StateSpace or "
                             "TransferFunction object.   It is %s." % type(sys))
@@ -1528,14 +1560,14 @@ def ss2tf(*args, **kwargs):
     The function accepts either 1 or 4 parameters:
 
     ``ss2tf(sys)``
-        Convert a linear system into space system form. Always creates a
-        new system, even if sys is already a StateSpace object.
+        Convert a linear system from state space into transfer function
+        form. Always creates a new system.
 
     ``ss2tf(A, B, C, D)``
-        Create a state space system from the matrices of its state and
+        Create a transfer function system from the matrices of its state and
         output equations.
 
-        For details see: :func:`ss`
+        For details see: :func:`tf`
 
     Parameters
     ----------
@@ -1554,6 +1586,16 @@ def ss2tf(*args, **kwargs):
     -------
     out: TransferFunction
         New linear system in transfer function form
+
+    Other Parameters
+    ----------------
+    inputs, outputs : str, or list of str, optional
+        List of strings that name the individual signals of the transformed
+        system.  If not given, the inputs and outputs are the same as the
+        original system.
+    name : string, optional
+        System name. If unspecified, a generic name <sys[id]> is generated
+        with a unique integer id.
 
     Raises
     ------
@@ -1587,10 +1629,11 @@ def ss2tf(*args, **kwargs):
         # Assume we were given the A, B, C, D matrix and (optional) dt
         return _convert_to_transfer_function(StateSpace(*args, **kwargs))
 
-    elif len(args) == 1:
+    if len(args) == 1:
         sys = args[0]
         if isinstance(sys, StateSpace):
-            return _convert_to_transfer_function(sys)
+            return TransferFunction(
+                _convert_to_transfer_function(sys), **kwargs)
         else:
             raise TypeError(
                 "ss2tf(sys): sys must be a StateSpace object.  It is %s."

@@ -14,8 +14,6 @@ of this is unknown.
 
 """
 
-from __future__ import print_function
-from warnings import warn
 
 import numpy as np
 import pytest
@@ -227,7 +225,7 @@ class TestConvert:
                [[1], [1, 0]]]
         g = tf(num, den)
         s = ss(g)
-        np.testing.assert_allclose(g.pole(), s.pole())
+        np.testing.assert_allclose(g.poles(), s.poles())
 
     @slycotonly
     def test_tf2ss_robustness(self):
@@ -243,10 +241,10 @@ class TestConvert:
         sys2ss = tf2ss(sys2tf)
 
         # Make sure that the poles match for StateSpace and TransferFunction
-        np.testing.assert_array_almost_equal(np.sort(sys1tf.pole()),
-                                             np.sort(sys1ss.pole()))
-        np.testing.assert_array_almost_equal(np.sort(sys2tf.pole()),
-                                             np.sort(sys2ss.pole()))
+        np.testing.assert_array_almost_equal(np.sort(sys1tf.poles()),
+                                             np.sort(sys1ss.poles()))
+        np.testing.assert_array_almost_equal(np.sort(sys2tf.poles()),
+                                             np.sort(sys2ss.poles()))
 
     def test_tf2ss_nonproper(self):
         """Unit tests for non-proper transfer functions"""

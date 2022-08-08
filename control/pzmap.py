@@ -41,7 +41,8 @@
 
 from numpy import real, imag, linspace, exp, cos, sin, sqrt
 from math import pi
-from .lti import LTI, isdtime, isctime
+from .lti import LTI
+from .namedio import isdtime, isctime
 from .grid import sgrid, zgrid, nogrid
 from . import config
 
@@ -59,8 +60,7 @@ _pzmap_defaults = {
 #    http://matplotlib.sourceforge.net/examples/axes_grid/demo_axisline_style.html
 #    http://matplotlib.sourceforge.net/examples/axes_grid/demo_curvelinear_grid.html
 def pzmap(sys, plot=None, grid=None, title='Pole Zero Map', **kwargs):
-    """
-    Plot a pole/zero map for a linear system.
+    """Plot a pole/zero map for a linear system.
 
     Parameters
     ----------
@@ -78,13 +78,25 @@ def pzmap(sys, plot=None, grid=None, title='Pole Zero Map', **kwargs):
         The systems poles
     zeros: array
         The system's zeros.
+
+    Notes
+    -----
+    The pzmap function calls matplotlib.pyplot.axis('equal'), which means
+    that trying to reset the axis limits may not behave as expected.  To
+    change the axis limits, use matplotlib.pyplot.gca().axis('auto') and
+    then set the axis limits to the desired values.
+
     """
     # Check to see if legacy 'Plot' keyword was used
     if 'Plot' in kwargs:
         import warnings
         warnings.warn("'Plot' keyword is deprecated in pzmap; use 'plot'",
                       FutureWarning)
-        plot = kwargs['Plot']
+        plot = kwargs.pop('Plot')
+
+    # Make sure there were no extraneous keywords
+    if kwargs:
+        raise TypeError("unrecognized keywords: ", str(kwargs))
 
     # Get parameter values
     plot = config._get_param('pzmap', 'plot', plot, True)
@@ -93,8 +105,8 @@ def pzmap(sys, plot=None, grid=None, title='Pole Zero Map', **kwargs):
     if not isinstance(sys, LTI):
         raise TypeError('Argument ``sys``: must be a linear system.')
 
-    poles = sys.pole()
-    zeros = sys.zero()
+    poles = sys.poles()
+    zeros = sys.zeros()
 
     if (plot):
         import matplotlib.pyplot as plt

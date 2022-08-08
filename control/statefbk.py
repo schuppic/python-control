@@ -43,9 +43,14 @@
 import numpy as np
 
 from . import statesp
-from .mateqn import care
-from .statesp import _ssmatrix
-from .exception import ControlSlycot, ControlArgument, ControlDimension
+from .mateqn import care, dare, _check_shape
+from .statesp import StateSpace, _ssmatrix, _convert_to_statespace
+from .lti import LTI
+from .namedio import isdtime, isctime
+from .iosys import InputOutputSystem, NonlinearIOSystem, LinearIOSystem, \
+    interconnect, ss
+from .exception import ControlSlycot, ControlArgument, ControlDimension, \
+    ControlNotImplemented
 
 # Make sure we have access to the right slycot routines
 try:
@@ -66,8 +71,8 @@ except ImportError:
     sb03od = None
 
 
-__all__ = ['ctrb', 'obsv', 'gram', 'place', 'place_varga', 'lqr', 'lqe',
-           'acker']
+__all__ = ['ctrb', 'obsv', 'gram', 'place', 'place_varga', 'lqr', 
+           'dlqr', 'acker', 'create_statefbk_iosystem']
 
 
 # Pole placement
@@ -256,84 +261,6 @@ def place_varga(A, B, p, dtime=False, alpha=None):
     return _ssmatrix(-F)
 
 
-# contributed by Sawyer B. Fuller <minster@uw.edu>
-def lqe(A, G, C, QN, RN, NN=None):
-    """lqe(A, G, C, QN, RN, [, N])
-
-    Linear quadratic estimator design (Kalman filter) for continuous-time
-    systems. Given the system
-
-    .. math::
-
-        x &= Ax + Bu + Gw \\\\
-        y &= Cx + Du + v
-
-    with unbiased process noise w and measurement noise v with covariances
-
-    .. math::       E{ww'} = QN,    E{vv'} = RN,    E{wv'} = NN
-
-    The lqe() function computes the observer gain matrix L such that the
-    stationary (non-time-varying) Kalman filter
-
-    .. math:: x_e = A x_e + B u + L(y - C x_e - D u)
-
-    produces a state estimate that x_e that minimizes the expected squared
-    error using the sensor measurements y. The noise cross-correlation `NN`
-    is set to zero when omitted.
-
-    Parameters
-    ----------
-    A, G : 2D array_like
-        Dynamics and noise input matrices
-    QN, RN : 2D array_like
-        Process and sensor noise covariance matrices
-    NN : 2D array, optional
-        Cross covariance matrix
-
-    Returns
-    -------
-    L : 2D array (or matrix)
-        Kalman estimator gain
-    P : 2D array (or matrix)
-        Solution to Riccati equation
-
-        .. math::
-
-            A P + P A^T - (P C^T + G N) R^{-1}  (C P + N^T G^T) + G Q G^T = 0
-
-    E : 1D array
-        Eigenvalues of estimator poles eig(A - L C)
-
-    Notes
-    -----
-    The return type for 2D arrays depends on the default class set for
-    state space operations.  See :func:`~control.use_numpy_matrix`.
-
-    Examples
-    --------
-    >>> L, P, E = lqe(A, G, C, QN, RN)
-    >>> L, P, E = lqe(A, G, C, QN, RN, NN)
-
-    See Also
-    --------
-    lqr
-
-    """
-
-    # TODO: incorporate cross-covariance NN, something like this,
-    # which doesn't work for some reason
-    # if NN is None:
-    #    NN = np.zeros(QN.size(0),RN.size(1))
-    # NG = G @ NN
-
-    # LT, P, E = lqr(A.T, C.T, G @ QN @ G.T, RN)
-    # P, E, LT = care(A.T, C.T, G @ QN @ G.T, RN)
-    A, G, C = np.array(A, ndmin=2), np.array(G, ndmin=2), np.array(C, ndmin=2)
-    QN, RN = np.array(QN, ndmin=2), np.array(RN, ndmin=2)
-    P, E, LT = care(A.T, C.T, np.dot(np.dot(G, QN), G.T), RN)
-    return _ssmatrix(LT.T), _ssmatrix(P), E
-
-
 # Contributed by Roberto Bucher <roberto.bucher@supsi.ch>
 def acker(A, B, poles):
     """Pole placement using Ackermann method
@@ -375,43 +302,54 @@ def acker(A, B, poles):
     n = np.size(p)
     pmat = p[n-1] * np.linalg.matrix_power(a, 0)
     for i in np.arange(1, n):
-        pmat = pmat + np.dot(p[n-i-1], np.linalg.matrix_power(a, i))
+        pmat = pmat + p[n-i-1] * np.linalg.matrix_power(a, i)
     K = np.linalg.solve(ct, pmat)
 
     K = K[-1][:]                # Extract the last row
     return _ssmatrix(K)
 
 
-def lqr(*args, **keywords):
+def lqr(*args, **kwargs):
     """lqr(A, B, Q, R[, N])
 
     Linear quadratic regulator design
 
     The lqr() function computes the optimal state feedback controller
-    that minimizes the quadratic cost
+    u = -K x that minimizes the quadratic cost
 
     .. math:: J = \\int_0^\\infty (x' Q x + u' R u + 2 x' N u) dt
 
     The function can be called with either 3, 4, or 5 arguments:
 
-    * ``lqr(sys, Q, R)``
-    * ``lqr(sys, Q, R, N)``
-    * ``lqr(A, B, Q, R)``
-    * ``lqr(A, B, Q, R, N)``
+    * ``K, S, E = lqr(sys, Q, R)``
+    * ``K, S, E = lqr(sys, Q, R, N)``
+    * ``K, S, E = lqr(A, B, Q, R)``
+    * ``K, S, E = lqr(A, B, Q, R, N)``
 
     where `sys` is an `LTI` object, and `A`, `B`, `Q`, `R`, and `N` are
-    2d arrays or matrices of appropriate dimension.
+    2D arrays or matrices of appropriate dimension.
 
     Parameters
     ----------
-    A, B : 2D array
+    A, B : 2D array_like
         Dynamics and input matrices
-    sys : LTI (StateSpace or TransferFunction)
-        Linear I/O system
+    sys : LTI StateSpace system
+        Linear system
     Q, R : 2D array
         State and input weight matrices
     N : 2D array, optional
         Cross weight matrix
+    integral_action : ndarray, optional
+        If this keyword is specified, the controller includes integral action
+        in addition to state feedback.  The value of the `integral_action``
+        keyword should be an ndarray that will be multiplied by the current to
+        generate the error for the internal integrator states of the control
+        law.  The number of outputs that are to be integrated must match the
+        number of additional rows and columns in the ``Q`` matrix.
+    method : str, optional
+        Set the method used for computing the result.  Current methods are
+        'slycot' and 'scipy'.  If set to None (default), try 'slycot' first
+        and then 'scipy'.
 
     Returns
     -------
@@ -424,7 +362,156 @@ def lqr(*args, **keywords):
 
     See Also
     --------
-    lqe
+    lqe, dlqr, dlqe
+
+    Notes
+    -----
+    1. If the first argument is an LTI object, then this object will be used
+       to define the dynamics and input matrices.  Furthermore, if the LTI
+       object corresponds to a discrete time system, the ``dlqr()`` function
+       will be called.
+
+    2. The return type for 2D arrays depends on the default class set for
+       state space operations.  See :func:`~control.use_numpy_matrix`.
+
+    Examples
+    --------
+    >>> K, S, E = lqr(sys, Q, R, [N])
+    >>> K, S, E = lqr(A, B, Q, R, [N])
+
+    """
+    #
+    # Process the arguments and figure out what inputs we received
+    #
+
+    # If we were passed a discrete time system as the first arg, use dlqr()
+    if isinstance(args[0], LTI) and isdtime(args[0], strict=True):
+        # Call dlqr
+        return dlqr(*args, **kwargs)
+
+    # Get the system description
+    if (len(args) < 3):
+        raise ControlArgument("not enough input arguments")
+
+    # If we were passed a state space  system, use that to get system matrices
+    if isinstance(args[0], StateSpace):
+        A = np.array(args[0].A, ndmin=2, dtype=float)
+        B = np.array(args[0].B, ndmin=2, dtype=float)
+        index = 1
+
+    elif isinstance(args[0], LTI):
+        # Don't allow other types of LTI systems
+        raise ControlArgument("LTI system must be in state space form")
+
+    else:
+        # Arguments should be A and B matrices
+        A = np.array(args[0], ndmin=2, dtype=float)
+        B = np.array(args[1], ndmin=2, dtype=float)
+        index = 2
+
+    # Get the weighting matrices (converting to matrices, if needed)
+    Q = np.array(args[index], ndmin=2, dtype=float)
+    R = np.array(args[index+1], ndmin=2, dtype=float)
+    if (len(args) > index + 2):
+        N = np.array(args[index+2], ndmin=2, dtype=float)
+    else:
+        N = None
+
+    #
+    # Process keywords
+    #
+
+    # Get the method to use (if specified as a keyword)
+    method = kwargs.pop('method', None)
+
+    # See if we should augment the controller with integral feedback
+    integral_action = kwargs.pop('integral_action', None)
+    if integral_action is not None:
+        # Figure out the size of the system
+        nstates = A.shape[0]
+        ninputs = B.shape[1]
+
+        # Make sure that the integral action argument is the right type
+        if not isinstance(integral_action, np.ndarray):
+            raise ControlArgument("Integral action must pass an array")
+        elif integral_action.shape[1] != nstates:
+            raise ControlArgument(
+                "Integral gain size must match system state size")
+
+        # Process the states to be integrated
+        nintegrators = integral_action.shape[0]
+        C = integral_action
+
+        # Augment the system with integrators
+        A = np.block([
+            [A, np.zeros((nstates, nintegrators))],
+            [C, np.zeros((nintegrators, nintegrators))]
+        ])
+        B = np.vstack([B, np.zeros((nintegrators, ninputs))])
+
+    if kwargs:
+        raise TypeError("unrecognized keywords: ", str(kwargs))
+
+    # Compute the result (dimension and symmetry checking done in care())
+    X, L, G = care(A, B, Q, R, N, None, method=method, S_s="N")
+    return G, X, L
+
+
+def dlqr(*args, **kwargs):
+    """dlqr(A, B, Q, R[, N])
+
+    Discrete-time linear quadratic regulator design
+
+    The dlqr() function computes the optimal state feedback controller
+    u[n] = - K x[n] that minimizes the quadratic cost
+
+    .. math:: J = \\sum_0^\\infty (x[n]' Q x[n] + u[n]' R u[n] + 2 x[n]' N u[n])
+
+    The function can be called with either 3, 4, or 5 arguments:
+
+    * ``dlqr(dsys, Q, R)``
+    * ``dlqr(dsys, Q, R, N)``
+    * ``dlqr(A, B, Q, R)``
+    * ``dlqr(A, B, Q, R, N)``
+
+    where `dsys` is a discrete-time :class:`StateSpace` system, and `A`, `B`,
+    `Q`, `R`, and `N` are 2d arrays of appropriate dimension (`dsys.dt` must
+    not be 0.)
+
+    Parameters
+    ----------
+    A, B : 2D array
+        Dynamics and input matrices
+    dsys : LTI :class:`StateSpace`
+        Discrete-time linear system
+    Q, R : 2D array
+        State and input weight matrices
+    N : 2D array, optional
+        Cross weight matrix
+    integral_action : ndarray, optional
+        If this keyword is specified, the controller includes integral action
+        in addition to state feedback.  The value of the `integral_action``
+        keyword should be an ndarray that will be multiplied by the current to
+        generate the error for the internal integrator states of the control
+        law.  The number of outputs that are to be integrated must match the
+        number of additional rows and columns in the ``Q`` matrix.
+    method : str, optional
+        Set the method used for computing the result.  Current methods are
+        'slycot' and 'scipy'.  If set to None (default), try 'slycot' first
+        and then 'scipy'.
+
+    Returns
+    -------
+    K : 2D array (or matrix)
+        State feedback gains
+    S : 2D array (or matrix)
+        Solution to Riccati equation
+    E : 1D array
+        Eigenvalues of the closed loop system
+
+    See Also
+    --------
+    lqr, lqe, dlqe
 
     Notes
     -----
@@ -433,16 +520,9 @@ def lqr(*args, **keywords):
 
     Examples
     --------
-    >>> K, S, E = lqr(sys, Q, R, [N])
-    >>> K, S, E = lqr(A, B, Q, R, [N])
+    >>> K, S, E = dlqr(dsys, Q, R, [N])
+    >>> K, S, E = dlqr(A, B, Q, R, [N])
     """
-
-    # Make sure that SLICOT is installed
-    try:
-        from slycot import sb02md
-        from slycot import sb02mt
-    except ImportError:
-        raise ControlSlycot("can't find slycot module 'sb02md' or 'sb02nt'")
 
     #
     # Process the arguments and figure out what inputs we received
@@ -452,13 +532,21 @@ def lqr(*args, **keywords):
     if (len(args) < 3):
         raise ControlArgument("not enough input arguments")
 
-    try:
-        # If this works, we were (probably) passed a system as the
-        # first argument; extract A and B
+    # If we were passed a continus time system as the first arg, raise error
+    if isinstance(args[0], LTI) and isctime(args[0], strict=True):
+        raise ControlArgument("dsys must be discrete time (dt != 0)")
+
+    # If we were passed a state space  system, use that to get system matrices
+    if isinstance(args[0], StateSpace):
         A = np.array(args[0].A, ndmin=2, dtype=float)
         B = np.array(args[0].B, ndmin=2, dtype=float)
         index = 1
-    except AttributeError:
+
+    elif isinstance(args[0], LTI):
+        # Don't allow other types of LTI systems
+        raise ControlArgument("LTI system must be in state space form")
+
+    else:
         # Arguments should be A and B matrices
         A = np.array(args[0], ndmin=2, dtype=float)
         B = np.array(args[1], ndmin=2, dtype=float)
@@ -472,31 +560,234 @@ def lqr(*args, **keywords):
     else:
         N = np.zeros((Q.shape[0], R.shape[1]))
 
-    # Check dimensions for consistency
-    nstates = B.shape[0]
-    ninputs = B.shape[1]
-    if (A.shape[0] != nstates or A.shape[1] != nstates):
-        raise ControlDimension("inconsistent system dimensions")
+    #
+    # Process keywords
+    #
 
-    elif (Q.shape[0] != nstates or Q.shape[1] != nstates or
-          R.shape[0] != ninputs or R.shape[1] != ninputs or
-          N.shape[0] != nstates or N.shape[1] != ninputs):
-        raise ControlDimension("incorrect weighting matrix dimensions")
+    # Get the method to use (if specified as a keyword)
+    method = kwargs.pop('method', None)
 
-    # Compute the G matrix required by SB02MD
-    A_b, B_b, Q_b, R_b, L_b, ipiv, oufact, G = \
-        sb02mt(nstates, ninputs, B, R, A, Q, N, jobl='N')
+    # See if we should augment the controller with integral feedback
+    integral_action = kwargs.pop('integral_action', None)
+    if integral_action is not None:
+        # Figure out the size of the system
+        nstates = A.shape[0]
+        ninputs = B.shape[1]
 
-    # Call the SLICOT function
-    X, rcond, w, S, U, A_inv = sb02md(nstates, A_b, G, Q_b, 'C')
+        if not isinstance(integral_action, np.ndarray):
+            raise ControlArgument("Integral action must pass an array")
+        elif integral_action.shape[1] != nstates:
+            raise ControlArgument(
+                "Integral gain size must match system state size")
+        else:
+            nintegrators = integral_action.shape[0]
+            C = integral_action
 
-    # Now compute the return value
-    # We assume that R is positive definite and, hence, invertible
-    K = np.linalg.solve(R, np.dot(B.T, X) + N.T)
-    S = X
-    E = w[0:nstates]
+            # Augment the system with integrators
+            A = np.block([
+                [A, np.zeros((nstates, nintegrators))],
+                [C, np.eye(nintegrators)]
+            ])
+            B = np.vstack([B, np.zeros((nintegrators, ninputs))])
 
+    if kwargs:
+        raise TypeError("unrecognized keywords: ", str(kwargs))
+
+    # Compute the result (dimension and symmetry checking done in dare())
+    S, E, K = dare(A, B, Q, R, N, method=method, S_s="N")
     return _ssmatrix(K), _ssmatrix(S), E
+
+
+# Function to create an I/O sytems representing a state feedback controller
+def create_statefbk_iosystem(
+        sys, K, integral_action=None, xd_labels='xd[{i}]', ud_labels='ud[{i}]',
+        estimator=None, type='linear'):
+    """Create an I/O system using a (full) state feedback controller
+
+    This function creates an input/output system that implements a
+    state feedback controller of the form
+
+        u = ud - K_p (x - xd) - K_i integral(C x - C x_d)
+
+    It can be called in the form
+
+        ctrl, clsys = ct.create_statefbk_iosystem(sys, K)
+
+    where ``sys`` is the process dynamics and ``K`` is the state (+ integral)
+    feedback gain (eg, from LQR).  The function returns the controller
+    ``ctrl`` and the closed loop systems ``clsys``, both as I/O systems.
+
+    Parameters
+    ----------
+    sys : InputOutputSystem
+        The I/O system that represents the process dynamics.  If no estimator
+        is given, the output of this system should represent the full state.
+
+    K : ndarray
+        The state feedback gain.  This matrix defines the gains to be
+        applied to the system.  If ``integral_action`` is None, then the
+        dimensions of this array should be (sys.ninputs, sys.nstates).  If
+        `integral action` is set to a matrix or a function, then additional
+        columns represent the gains of the integral states of the
+        controller.
+
+    xd_labels, ud_labels : str or list of str, optional
+        Set the name of the signals to use for the desired state and inputs.
+        If a single string is specified, it should be a format string using
+        the variable ``i`` as an index.  Otherwise, a list of strings matching
+        the size of xd and ud, respectively, should be used.  Default is
+        ``'xd[{i}]'`` for xd_labels and ``'xd[{i}]'`` for ud_labels.
+
+    integral_action : None, ndarray, or func, optional
+        If this keyword is specified, the controller can include integral
+        action in addition to state feedback.  If ``integral_action`` is an
+        ndarray, it will be multiplied by the current and desired state to
+        generate the error for the internal integrator states of the control
+        law.  If ``integral_action`` is a function ``h``, that function will
+        be called with the signature h(t, x, u, params) to obtain the
+        outputs that should be integrated.  The number of outputs that are
+        to be integrated must match the number of additional columns in the
+        ``K`` matrix.
+
+    estimator : InputOutputSystem, optional
+        If an estimator is provided, using the states of the estimator as
+        the system inputs for the controller.
+
+    type : 'nonlinear' or 'linear', optional
+        Set the type of controller to create. The default is a linear
+        controller implementing the LQR regulator. If the type is 'nonlinear',
+        a :class:NonlinearIOSystem is created instead, with the gain ``K`` as
+        a parameter (allowing modifications of the gain at runtime).
+
+    Returns
+    -------
+    ctrl : InputOutputSystem
+        Input/output system representing the controller.  This system takes
+        as inputs the desired state xd, the desired input ud, and the system
+        state x.  It outputs the controller action u according to the
+        formula u = ud - K(x - xd).  If the keyword `integral_action` is
+        specified, then an additional set of integrators is included in the
+        control system (with the gain matrix K having the integral gains
+        appended after the state gains).
+
+    clsys : InputOutputSystem
+        Input/output system representing the closed loop system.  This
+        systems takes as inputs the desired trajectory (xd, ud) and outputs
+        the system state x and the applied input u (vertically stacked).
+
+    """
+    # Make sure that we were passed an I/O system as an input
+    if not isinstance(sys, InputOutputSystem):
+        raise ControlArgument("Input system must be I/O system")
+
+    # See whether we were give an estimator
+    if estimator is not None:
+        # Check to make sure the estimator is the right size
+        if estimator.noutputs != sys.nstates:
+            raise ControlArgument("Estimator output size must match state")
+    elif sys.noutputs != sys.nstates:
+        # If no estimator, make sure that the system has all states as outputs
+        # TODO: check to make sure output map is the identity
+        raise ControlArgument("System output must be the full state")
+    else:
+        # Use the system directly instead of an estimator
+        estimator = sys
+
+    # See whether we should implement integral action
+    nintegrators = 0
+    if integral_action is not None:
+        if not isinstance(integral_action, np.ndarray):
+            raise ControlArgument("Integral action must pass an array")
+        elif integral_action.shape[1] != sys.nstates:
+            raise ControlArgument(
+                "Integral gain size must match system state size")
+        else:
+            nintegrators = integral_action.shape[0]
+            C = integral_action
+    else:
+        # Create a C matrix with no outputs, just in case update gets called
+        C = np.zeros((0, sys.nstates))
+
+    # Check to make sure that state feedback has the right shape
+    if not isinstance(K, np.ndarray) or \
+       K.shape != (sys.ninputs, estimator.noutputs + nintegrators):
+        raise ControlArgument(
+            f'Control gain must be an array of size {sys.ninputs}'
+            f'x {sys.nstates}' +
+            (f'+{nintegrators}' if nintegrators > 0 else ''))
+
+    # Figure out the labels to use
+    if isinstance(xd_labels, str):
+        # Gnerate the list of labels using the argument as a format string
+        xd_labels = [xd_labels.format(i=i) for i in range(sys.nstates)]
+
+    if isinstance(ud_labels, str):
+        # Gnerate the list of labels using the argument as a format string
+        ud_labels = [ud_labels.format(i=i) for i in range(sys.ninputs)]
+
+    # Define the controller system
+    if type == 'nonlinear':
+        # Create an I/O system for the state feedback gains
+        def _control_update(t, x, inputs, params):
+            # Split input into desired state, nominal input, and current state
+            xd_vec = inputs[0:sys.nstates]
+            x_vec = inputs[-estimator.nstates:]
+
+            # Compute the integral error in the xy coordinates
+            return C @ x_vec - C @ xd_vec
+
+        def _control_output(t, e, z, params):
+            K = params.get('K')
+
+            # Split input into desired state, nominal input, and current state
+            xd_vec = z[0:sys.nstates]
+            ud_vec = z[sys.nstates:sys.nstates + sys.ninputs]
+            x_vec = z[-sys.nstates:]
+
+            # Compute the control law
+            u = ud_vec - K[:, 0:sys.nstates] @ (x_vec - xd_vec)
+            if nintegrators > 0:
+                u -= K[:, sys.nstates:] @ e
+
+            return u
+
+        ctrl = NonlinearIOSystem(
+            _control_update, _control_output, name='control',
+            inputs=xd_labels + ud_labels + estimator.output_labels,
+            outputs=list(sys.input_index.keys()), params={'K': K},
+            states=nintegrators)
+
+    elif type == 'linear' or type is None:
+        # Create the matrices implementing the controller
+        if isctime(sys):
+            # Continuous time: integrator
+            A_lqr = np.zeros((C.shape[0], C.shape[0]))
+        else:
+            # Discrete time: summer
+            A_lqr = np.eye(C.shape[0])
+        B_lqr = np.hstack([-C, np.zeros((C.shape[0], sys.ninputs)), C])
+        C_lqr = -K[:, sys.nstates:]
+        D_lqr = np.hstack([
+            K[:, 0:sys.nstates], np.eye(sys.ninputs), -K[:, 0:sys.nstates]
+        ])
+
+        ctrl = ss(
+            A_lqr, B_lqr, C_lqr, D_lqr, dt=sys.dt, name='control',
+            inputs=xd_labels + ud_labels + estimator.output_labels,
+            outputs=list(sys.input_index.keys()), states=nintegrators)
+
+    else:
+        raise ControlArgument(f"unknown type '{type}'")
+
+    # Define the closed loop system
+    closed = interconnect(
+        [sys, ctrl] if estimator == sys else [sys, ctrl, estimator],
+        name=sys.name + "_" + ctrl.name,
+        inplist=xd_labels + ud_labels, inputs=xd_labels + ud_labels,
+        outlist=sys.output_labels + sys.input_labels,
+        outputs=sys.output_labels + sys.input_labels
+    )
+    return ctrl, closed
 
 
 def ctrb(A, B):
@@ -530,7 +821,7 @@ def ctrb(A, B):
 
     # Construct the controllability matrix
     ctrb = np.hstack(
-        [bmat] + [np.dot(np.linalg.matrix_power(amat, i), bmat)
+        [bmat] + [np.linalg.matrix_power(amat, i) @ bmat
                   for i in range(1, n)])
     return _ssmatrix(ctrb)
 
@@ -564,7 +855,7 @@ def obsv(A, C):
     n = np.shape(amat)[0]
 
     # Construct the observability matrix
-    obsv = np.vstack([cmat] + [np.dot(cmat, np.linalg.matrix_power(amat, i))
+    obsv = np.vstack([cmat] + [cmat @ np.linalg.matrix_power(amat, i)
                                for i in range(1, n)])
     return _ssmatrix(obsv)
 
@@ -617,7 +908,7 @@ def gram(sys, type):
     if type not in ['c', 'o', 'cf', 'of']:
         raise ValueError("That type is not supported!")
 
-    # TODO: Check for continous or discrete, only continuous supported for now
+    # TODO: Check for continuous or discrete, only continuous supported for now
         # if isCont():
         #    dico = 'C'
         # elif isDisc():
@@ -637,10 +928,10 @@ def gram(sys, type):
             raise ControlSlycot("can't find slycot module 'sb03md'")
         if type == 'c':
             tra = 'T'
-            C = -np.dot(sys.B, sys.B.transpose())
+            C = -sys.B @ sys.B.T
         elif type == 'o':
             tra = 'N'
-            C = -np.dot(sys.C.transpose(), sys.C)
+            C = -sys.C.T @ sys.C
         n = sys.nstates
         U = np.zeros((n, n))
         A = np.array(sys.A)         # convert to NumPy array for slycot

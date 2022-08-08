@@ -1,7 +1,6 @@
 """timeresp_test.py - test time response functions"""
 
 from copy import copy
-from distutils.version import StrictVersion
 
 import numpy as np
 import pytest
@@ -9,7 +8,7 @@ import scipy as sp
 
 import control as ct
 from control import StateSpace, TransferFunction, c2d, isctime, ss2tf, tf2ss
-from control.exception import slycot_check
+from control.exception import slycot_check, pandas_check
 from control.tests.conftest import slycotonly
 from control.timeresp import (_default_time_vector, _ideal_tfinal_and_dt,
                               forced_response, impulse_response,
@@ -521,8 +520,6 @@ class TestTimeresp:
         _t, yy = impulse_response(sys, T=t, input=0)
         np.testing.assert_array_almost_equal(yy[:,0,:], yref_notrim, decimal=4)
 
-    @pytest.mark.skipif(StrictVersion(sp.__version__) < "1.3",
-                        reason="requires SciPy 1.3 or greater")
     @pytest.mark.parametrize("tsystem", ["siso_tf1"], indirect=True)
     def test_discrete_time_impulse(self, tsystem):
         # discrete time impulse sampled version should match cont time
@@ -681,7 +678,8 @@ class TestTimeresp:
             fr_kwargs['X0'] = tsystem.X0
         t, y = forced_response(tsystem.sys, **fr_kwargs)
         np.testing.assert_allclose(t, tsystem.t)
-        np.testing.assert_allclose(y, getattr(tsystem, refattr), rtol=1e-3)
+        np.testing.assert_allclose(y, getattr(tsystem, refattr),
+                                   rtol=1e-3, atol=1e-5)
 
     @pytest.mark.parametrize("tsystem", ["siso_ss1"], indirect=True)
     def test_forced_response_invalid_c(self, tsystem):
@@ -742,7 +740,7 @@ class TestTimeresp:
 
         _t, yout, xout = forced_response(sys, t, u, x0, return_x=True)
         np.testing.assert_array_almost_equal(xout, xtrue, decimal=6)
-        ytrue = np.squeeze(np.asarray(C.dot(xtrue)))
+        ytrue = np.squeeze(np.asarray(C @ xtrue))
         np.testing.assert_array_almost_equal(yout, ytrue, decimal=6)
 
 
@@ -874,7 +872,7 @@ class TestTimeresp:
                 kw['U'] = np.vstack([np.sin(t) for i in range(sys.ninputs)])
         elif fun == forced_response and isctime(sys, strict=True):
             pytest.skip("No continuous forced_response without time vector.")
-        if hasattr(sys, "nstates"):
+        if hasattr(sys, "nstates") and sys.nstates is not None:
             kw['X0'] = np.arange(sys.nstates) + 1
         if sys.ninputs > 1 and fun in [step_response, impulse_response]:
             kw['input'] = 1
@@ -997,9 +995,6 @@ class TestTimeresp:
         [6,    2,    2,  False,  (2, 2, 8),  (2, 8)],
     ])
     def test_squeeze(self, fcn, nstate, nout, ninp, squeeze, shape1, shape2):
-        # Figure out if we have SciPy 1+
-        scipy0 = StrictVersion(sp.__version__) < '1.0'
-
         # Define the system
         if fcn == ct.tf and (nout > 1 or ninp > 1) and not slycot_check():
             pytest.skip("Conversion of MIMO systems to transfer functions "
@@ -1009,9 +1004,7 @@ class TestTimeresp:
 
         # Generate the time and input vectors
         tvec = np.linspace(0, 1, 8)
-        uvec = np.dot(
-            np.ones((sys.ninputs, 1)),
-            np.reshape(np.sin(tvec), (1, 8)))
+        uvec = np.ones((sys.ninputs, 1)) @ np.reshape(np.sin(tvec), (1, 8))
 
         #
         # Pass squeeze argument and make sure the shape is correct
@@ -1078,7 +1071,7 @@ class TestTimeresp:
             assert yvec.shape == (8, )
 
         # For InputOutputSystems, also test input/output response
-        if isinstance(sys, ct.InputOutputSystem) and not scipy0:
+        if isinstance(sys, ct.InputOutputSystem):
             _, yvec = ct.input_output_response(sys, tvec, uvec, squeeze=squeeze)
             assert yvec.shape == shape2
 
@@ -1109,7 +1102,7 @@ class TestTimeresp:
             assert yvec.shape == (sys.noutputs, 8)
 
         # For InputOutputSystems, also test input_output_response
-        if isinstance(sys, ct.InputOutputSystem) and not scipy0:
+        if isinstance(sys, ct.InputOutputSystem):
             _, yvec = ct.input_output_response(sys, tvec, uvec)
             if squeeze is not True or sys.noutputs > 1:
                 assert yvec.shape == (sys.noutputs, 8)
@@ -1117,7 +1110,7 @@ class TestTimeresp:
     @pytest.mark.parametrize("fcn", [ct.ss, ct.tf, ct.ss2io])
     def test_squeeze_exception(self, fcn):
         sys = fcn(ct.rss(2, 1, 1))
-        with pytest.raises(ValueError, match="unknown squeeze value"):
+        with pytest.raises(ValueError, match="Unknown squeeze value"):
             step_response(sys, squeeze=1)
 
     @pytest.mark.usefixtures("editsdefaults")
@@ -1143,9 +1136,7 @@ class TestTimeresp:
         # Generate system, time, and input vectors
         sys = ct.rss(nstate, nout, ninp, strictly_proper=True)
         tvec = np.linspace(0, 1, 8)
-        uvec = np.dot(
-            np.ones((sys.ninputs, 1)),
-            np.reshape(np.sin(tvec), (1, 8)))
+        uvec =np.ones((sys.ninputs, 1)) @ np.reshape(np.sin(tvec), (1, 8))
 
         _, yvec = ct.initial_response(sys, tvec, 1, squeeze=squeeze)
         assert yvec.shape == shape
@@ -1183,3 +1174,55 @@ class TestTimeresp:
         assert t.shape == (T.size, )
         assert y.shape == ysh_no
         assert x.shape == (T.size, sys.nstates)
+
+
+@pytest.mark.skipif(not pandas_check(), reason="pandas not installed")
+def test_to_pandas():
+    # Create a SISO time response
+    sys = ct.rss(2, 1, 1)
+    timepts = np.linspace(0, 10, 10)
+    resp = ct.input_output_response(sys, timepts, 1)
+
+    # Convert to pandas
+    df = resp.to_pandas()
+
+    # Check to make sure the data make senses
+    np.testing.assert_equal(df['time'], resp.time)
+    np.testing.assert_equal(df['u[0]'], resp.inputs)
+    np.testing.assert_equal(df['y[0]'], resp.outputs)
+    np.testing.assert_equal(df['x[0]'], resp.states[0])
+    np.testing.assert_equal(df['x[1]'], resp.states[1])
+
+    # Create a MIMO time response
+    sys = ct.rss(2, 2, 1)
+    resp = ct.input_output_response(sys, timepts, np.sin(timepts))
+    df = resp.to_pandas()
+    np.testing.assert_equal(df['time'], resp.time)
+    np.testing.assert_equal(df['u[0]'], resp.inputs[0])
+    np.testing.assert_equal(df['y[0]'], resp.outputs[0])
+    np.testing.assert_equal(df['y[1]'], resp.outputs[1])
+    np.testing.assert_equal(df['x[0]'], resp.states[0])
+    np.testing.assert_equal(df['x[1]'], resp.states[1])
+
+    # Change the time points
+    sys = ct.rss(2, 1, 1)
+    T = np.linspace(0, timepts[-1]/2, timepts.size * 2)
+    resp = ct.input_output_response(sys, timepts, np.sin(timepts), t_eval=T)
+    df = resp.to_pandas()
+    np.testing.assert_equal(df['time'], resp.time)
+    np.testing.assert_equal(df['u[0]'], resp.inputs)
+    np.testing.assert_equal(df['y[0]'], resp.outputs)
+    np.testing.assert_equal(df['x[0]'], resp.states[0])
+    np.testing.assert_equal(df['x[1]'], resp.states[1])
+
+
+@pytest.mark.skipif(pandas_check(), reason="pandas installed")
+def test_no_pandas():
+    # Create a SISO time response
+    sys = ct.rss(2, 1, 1)
+    timepts = np.linspace(0, 10, 10)
+    resp = ct.input_output_response(sys, timepts, 1)
+
+    # Convert to pandas
+    with pytest.raises(ImportError, match="pandas"):
+        df = resp.to_pandas()

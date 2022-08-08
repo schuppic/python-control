@@ -71,16 +71,6 @@ Time domain simulation
     step_response
     phase_plot
 
-Block diagram algebra
-=====================
-.. autosummary::
-   :toctree: generated/
-
-    series
-    parallel
-    feedback
-    negate
-
 Control system analysis
 =======================
 .. autosummary::
@@ -90,14 +80,19 @@ Control system analysis
     describing_function
     evalfr
     freqresp
+    get_input_ff_index
+    get_output_fb_index
+    ispassive
     margin
     stability_margins
     phase_crossover_frequencies
-    pole
-    zero
+    poles
+    zeros
     pzmap
     root_locus
     sisotool
+
+
 
 Matrix computations
 ===================
@@ -118,12 +113,14 @@ Control system synthesis
    :toctree: generated/
 
     acker
+    create_statefbk_iosystem
+    dlqr
     h2syn
     hinfsyn
     lqr
-    lqe
     mixsyn
     place
+    rootlocus_pid_designer
 
 Model simplification tools
 ==========================
@@ -151,6 +148,17 @@ Nonlinear system support
     summing_junction
     tf2io
     flatsys.point_to_point
+
+Stochastic system support
+=========================
+.. autosummary::
+   :toctree: generated/
+
+    correlation
+    create_estimator_iosystem
+    dlqe
+    lqe
+    white_noise
 
 .. _utility-and-conversions:
 

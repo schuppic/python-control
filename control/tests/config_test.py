@@ -23,10 +23,10 @@ class TestConfig:
     sys = ct.tf([10], [1, 2, 1])
 
     def test_set_defaults(self):
-        ct.config.set_defaults('config', test1=1, test2=2, test3=None)
-        assert ct.config.defaults['config.test1'] == 1
-        assert ct.config.defaults['config.test2'] == 2
-        assert ct.config.defaults['config.test3'] is None
+        ct.config.set_defaults('freqplot', dB=1, deg=2, Hz=None)
+        assert ct.config.defaults['freqplot.dB'] == 1
+        assert ct.config.defaults['freqplot.deg'] == 2
+        assert ct.config.defaults['freqplot.Hz'] is None
 
     @mplcleanup
     def test_get_param(self):
@@ -292,8 +292,12 @@ class TestConfig:
         """Test that static gain systems always have dt=None"""
         ct.set_defaults('control', default_dt=0)
         assert ct.tf(1, 1).dt is None
-        assert ct.ss(0, 0, 0, 1).dt is None
-        # TODO: add in test for static gain iosys
+        assert ct.ss([], [], [], 1).dt is None
+
+        # Make sure static gain is preserved for the I/O system
+        sys = ct.ss([], [], [], 1)
+        sys_io = ct.ss2io(sys)
+        assert sys_io.dt is None
 
     def test_get_param_last(self):
         """Test _get_param last keyword"""

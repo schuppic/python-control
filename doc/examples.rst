@@ -29,6 +29,7 @@ other sources.
    robust_mimo
    cruise-control
    steering-gainsched
+   steering-optimal
    kincar-flatsys
 
 Jupyter notebooks
@@ -43,6 +44,9 @@ using running examples in FBS2e.
 
    cruise
    describing_functions
+   kincar-fusion
    mpc_aircraft
    steering
    pvtol-lqr-nested
+   pvtol-outputfbk
+   stochresp

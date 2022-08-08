@@ -6,11 +6,11 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal
 import pytest
 
-from control.sisotool import sisotool
+from control.sisotool import sisotool, rootlocus_pid_designer
 from control.rlocus import _RLClickDispatcher
 from control.xferfcn import TransferFunction
 from control.statesp import StateSpace
-
+from control import c2d
 
 @pytest.mark.usefixtures("mplcleanup")
 class TestSisotool:
@@ -102,8 +102,8 @@ class TestSisotool:
 
         # Check if the bode_mag line has moved
         bode_mag_moved = np.array(
-            [674.0242, 667.8354, 661.7033, 655.6275, 649.6074, 643.6426,
-              637.7324, 631.8765, 626.0742, 620.3252])
+            [69.0065, 68.6749, 68.3448, 68.0161, 67.6889, 67.3631, 67.0388,
+             66.7159, 66.3944, 66.0743])
         assert_array_almost_equal(ax_mag.lines[0].get_data()[1][10:20],
                                   bode_mag_moved, 4)
 
@@ -140,3 +140,41 @@ class TestSisotool:
         # but 2 input, 1 output should
         with pytest.raises(ControlMIMONotImplemented):
             sisotool(sys221)
+
+@pytest.mark.usefixtures("mplcleanup")
+class TestPidDesigner:
+    @pytest.fixture
+    def plant(self, request):
+        plants = {
+            'syscont':TransferFunction(1,[1, 3, 0]),
+            'sysdisc1':c2d(TransferFunction(1,[1, 3, 0]), .1),
+            'syscont221':StateSpace([[-.3, 0],[1,0]],[[-1,],[.1,]], [0, -.3], 0)}
+        return plants[request.param]
+
+    # test permutations of system construction without plotting
+    @pytest.mark.parametrize('plant', ('syscont', 'sysdisc1', 'syscont221'), indirect=True)
+    @pytest.mark.parametrize('gain', ('P', 'I', 'D'))
+    @pytest.mark.parametrize('sign', (1,))
+    @pytest.mark.parametrize('input_signal', ('r', 'd'))
+    @pytest.mark.parametrize('Kp0', (0,))
+    @pytest.mark.parametrize('Ki0', (1.,))
+    @pytest.mark.parametrize('Kd0', (0.1,))
+    @pytest.mark.parametrize('tau', (0.01,))
+    @pytest.mark.parametrize('C_ff', (0, 1,))
+    @pytest.mark.parametrize('derivative_in_feedback_path', (True, False,))
+    @pytest.mark.parametrize("kwargs", [{'plot':False},])
+    def test_pid_designer_1(self, plant, gain, sign, input_signal, Kp0, Ki0, Kd0, tau, C_ff,
+            derivative_in_feedback_path, kwargs):
+        rootlocus_pid_designer(plant, gain, sign, input_signal, Kp0, Ki0, Kd0, tau, C_ff,
+            derivative_in_feedback_path, **kwargs)
+
+    # test creation of sisotool plot
+    # input from reference or disturbance
+    @pytest.mark.skip("Bode plot is incorrect; generates spurious warnings")
+    @pytest.mark.parametrize('plant', ('syscont', 'syscont221'), indirect=True)
+    @pytest.mark.parametrize("kwargs", [
+        {'input_signal':'r', 'Kp0':0.01, 'derivative_in_feedback_path':True},
+        {'input_signal':'d', 'Kp0':0.01, 'derivative_in_feedback_path':True},])
+    def test_pid_designer_2(self, plant, kwargs):
+        rootlocus_pid_designer(plant, **kwargs)
+

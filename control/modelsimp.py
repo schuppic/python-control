@@ -40,15 +40,12 @@
 #
 # $Id$
 
-# Python 3 compatibility
-from __future__ import print_function
-
 # External packages and modules
 import numpy as np
 import warnings
 from .exception import ControlSlycot, ControlMIMONotImplemented, \
     ControlDimension
-from .lti import isdtime, isctime
+from .namedio import isdtime, isctime
 from .statesp import StateSpace
 from .statefbk import gram
 
@@ -96,7 +93,7 @@ def hsvd(sys):
 
     Wc = gram(sys, 'c')
     Wo = gram(sys, 'o')
-    WoWc = np.dot(Wo, Wc)
+    WoWc = Wo @ Wc
     w, v = np.linalg.eig(WoWc)
 
     hsv = np.sqrt(w)
@@ -195,10 +192,10 @@ def modred(sys, ELIM, method='matchdc'):
         A22I_A21 = A22I_A21_B2[:, :A21.shape[1]]
         A22I_B2 = A22I_A21_B2[:, A21.shape[1]:]
 
-        Ar = A11 - np.dot(A12, A22I_A21)
-        Br = B1 - np.dot(A12, A22I_B2)
-        Cr = C1 - np.dot(C2, A22I_A21)
-        Dr = sys.D - np.dot(C2, A22I_B2)
+        Ar = A11 - A12 @ A22I_A21
+        Br = B1 - A12 @ A22I_B2
+        Cr = C1 - C2 @ A22I_A21
+        Dr = sys.D - C2 @ A22I_B2
     elif method == 'truncate':
         # if truncate, simply discard state x2
         Ar = A11
@@ -357,7 +354,7 @@ def minreal(sys, tol=None, verbose=True):
     sysr = sys.minreal(tol)
     if verbose:
         print("{nstates} states have been removed from the model".format(
-                nstates=len(sys.pole()) - len(sysr.pole())))
+                nstates=len(sys.poles()) - len(sysr.poles())))
     return sysr
 
 

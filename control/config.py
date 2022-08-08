@@ -73,6 +73,9 @@ def set_defaults(module, **keywords):
     if not isinstance(module, str):
         raise ValueError("module must be a string")
     for key, val in keywords.items():
+        keyname = module + '.' + key
+        if keyname not in defaults and f"deprecated.{keyname}" not in defaults:
+            raise TypeError(f"unrecognized keyword: {key}")
         defaults[module + '.' + key] = val
 
 
@@ -102,6 +105,9 @@ def reset_defaults():
 
     from .iosys import _iosys_defaults
     defaults.update(_iosys_defaults)
+
+    from .optimal import _optimal_defaults
+    defaults.update(_optimal_defaults)
 
 
 def _get_param(module, param, argval=None, defval=None, pop=False, last=False):
@@ -261,6 +267,15 @@ def use_legacy_defaults(version):
     #
     reset_defaults()            # start from a clean slate
 
+    # Version 0.9.2:
+    if major == 0 and minor < 9 or (minor == 9 and patch < 2):
+        from math import inf
+
+        # Reset Nyquist defaults
+        set_defaults('nyquist', indent_radius=0.1, max_curve_magnitude=inf,
+                     max_curve_offset=0, primary_style=['-', '-'],
+                     mirror_style=['--', '--'], start_marker_size=0)
+
     # Version 0.9.0:
     if major == 0 and minor < 9:
         # switched to 'array' as default for state space objects
@@ -286,6 +301,6 @@ def use_legacy_defaults(version):
         set_defaults('control', squeeze_time_response=True)
 
         # switched mirror_style of nyquist from '-' to '--'
-        set_defaults('nyqist', mirror_style='-')
+        set_defaults('nyquist', mirror_style='-')
 
     return (major, minor, patch)

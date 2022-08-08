@@ -18,12 +18,15 @@ import control as ct
 from control.config import defaults
 from control.dtime import sample_system
 from control.lti import evalfr
-from control.statesp import (StateSpace, _convert_to_statespace, drss,
-                             rss, ss, tf2ss, _statesp_defaults, _rss_generate)
+from control.statesp import StateSpace, _convert_to_statespace, tf2ss, \
+    _statesp_defaults, _rss_generate, linfnorm
+from control.iosys import ss, rss, drss
 from control.tests.conftest import ismatarrayout, slycotonly
 from control.xferfcn import TransferFunction, ss2tf
 
+
 from .conftest import editsdefaults
+
 
 class TestStateSpace:
     """Tests for the StateSpace class."""
@@ -124,7 +127,7 @@ class TestStateSpace:
     @pytest.mark.parametrize("args, exc, errmsg",
                              [((True, ), TypeError,
                                "(can only take in|sys must be) a StateSpace"),
-                              ((1, 2), ValueError, "1, 4, or 5 arguments"),
+                              ((1, 2), TypeError, "1, 4, or 5 arguments"),
                               ((np.ones((3, 2)), np.ones((3, 2)),
                                 np.ones((2, 2)), np.ones((2, 2))),
                                ValueError, "A must be square"),
@@ -179,16 +182,17 @@ class TestStateSpace:
         linsys.A[0, 0] = -3
         np.testing.assert_allclose(cpysys.A, [[-1]])  # original value
 
+    @pytest.mark.skip("obsolete test")
     def test_copy_constructor_nodt(self, sys322):
         """Test the copy constructor when an object without dt is passed"""
         sysin = sample_system(sys322, 1.)
-        del sysin.dt
+        del sysin.dt            # this is a nonsensical thing to do
         sys = StateSpace(sysin)
         assert sys.dt == defaults['control.default_dt']
 
         # test for static gain
         sysin = StateSpace([], [], [], [[1, 2], [3, 4]], 1.)
-        del sysin.dt
+        del sysin.dt            # this is a nonsensical thing to do
         sys = StateSpace(sysin)
         assert sys.dt is None
 
@@ -229,7 +233,7 @@ class TestStateSpace:
     def test_pole(self, sys322):
         """Evaluate the poles of a MIMO system."""
 
-        p = np.sort(sys322.pole())
+        p = np.sort(sys322.poles())
         true_p = np.sort([3.34747678408874,
                           -3.17373839204437 + 1.47492908003839j,
                           -3.17373839204437 - 1.47492908003839j])
@@ -239,7 +243,7 @@ class TestStateSpace:
     def test_zero_empty(self):
         """Test to make sure zero() works with no zeros in system."""
         sys = _convert_to_statespace(TransferFunction([1], [1, 2, 1]))
-        np.testing.assert_array_equal(sys.zero(), np.array([]))
+        np.testing.assert_array_equal(sys.zeros(), np.array([]))
 
     @slycotonly
     def test_zero_siso(self, sys222):
@@ -251,9 +255,9 @@ class TestStateSpace:
 
         # compute zeros as root of the characteristic polynomial at the numerator of tf111
         # this method is simple and assumed as valid in this test
-        true_z = np.sort(tf111[0, 0].zero())
+        true_z = np.sort(tf111[0, 0].zeros())
         # Compute the zeros through ab08nd, which is tested here
-        z = np.sort(sys111.zero())
+        z = np.sort(sys111.zeros())
 
         np.testing.assert_almost_equal(true_z, z)
 
@@ -261,7 +265,7 @@ class TestStateSpace:
     def test_zero_mimo_sys322_square(self, sys322):
         """Evaluate the zeros of a square MIMO system."""
 
-        z = np.sort(sys322.zero())
+        z = np.sort(sys322.zeros())
         true_z = np.sort([44.41465, -0.490252, -5.924398])
         np.testing.assert_array_almost_equal(z, true_z)
 
@@ -269,7 +273,7 @@ class TestStateSpace:
     def test_zero_mimo_sys222_square(self, sys222):
         """Evaluate the zeros of a square MIMO system."""
 
-        z = np.sort(sys222.zero())
+        z = np.sort(sys222.zeros())
         true_z = np.sort([-10.568501,   3.368501])
         np.testing.assert_array_almost_equal(z, true_z)
 
@@ -277,7 +281,7 @@ class TestStateSpace:
     def test_zero_mimo_sys623_non_square(self, sys623):
         """Evaluate the zeros of a non square MIMO system."""
 
-        z = np.sort(sys623.zero())
+        z = np.sort(sys623.zeros())
         true_z = np.sort([2., -1.])
         np.testing.assert_array_almost_equal(z, true_z)
 
@@ -569,15 +573,24 @@ class TestStateSpace:
         """
         g1 = StateSpace([], [], [], [2])
         g2 = StateSpace([], [], [], [3])
+        assert g1.dt == None
+        assert g2.dt == None
 
         g3 = g1 * g2
         assert 6 == g3.D[0, 0]
+        assert g3.dt == None
+
         g4 = g1 + g2
         assert 5 == g4.D[0, 0]
+        assert g4.dt == None
+
         g5 = g1.feedback(g2)
         np.testing.assert_allclose(2. / 7, g5.D[0, 0])
+        assert g5.dt == None
+
         g6 = g1.append(g2)
         np.testing.assert_allclose(np.diag([2, 3]), g6.D)
+        assert g6.dt == None
 
     def test_matrix_static_gain(self):
         """Regression: can we create matrix static gains?"""
@@ -592,12 +605,12 @@ class TestStateSpace:
         g3 = StateSpace([], [], [], d2.T)
 
         h1 = g1 * g2
-        np.testing.assert_allclose(np.dot(d1, d2), h1.D)
+        np.testing.assert_allclose(d1 @ d2, h1.D)
         h2 = g1 + g3
         np.testing.assert_allclose(d1 + d2.T, h2.D)
         h3 = g1.feedback(g2)
         np.testing.assert_array_almost_equal(
-            solve(np.eye(2) + np.dot(d1, d2), d1), h3.D)
+            solve(np.eye(2) + d1 @ d2, d1), h3.D)
         h4 = g1.append(g2)
         np.testing.assert_allclose(block_diag(d1, d2), h4.D)
 
@@ -748,9 +761,9 @@ class TestStateSpace:
         assert str(sysdt1) == tref + "\ndt = {}\n".format(1.)
 
     def test_pole_static(self):
-        """Regression: pole() of static gain is empty array."""
+        """Regression: poles() of static gain is empty array."""
         np.testing.assert_array_equal(np.array([]),
-                                      StateSpace([], [], [], [[1]]).pole())
+                                      StateSpace([], [], [], [[1]]).poles())
 
     def test_horner(self, sys322):
         """Test horner() function"""
@@ -767,18 +780,19 @@ class TestStateSpace:
         [[1, 1], [[1], [1]], np.atleast_2d([1,1]).T])
     @pytest.mark.parametrize('u', [0, 1, np.atleast_1d(2)])
     def test_dynamics_and_output_siso(self, x, u, sys121):
+        uref = np.atleast_1d(u)
         assert_array_almost_equal(
             sys121.dynamics(0, x, u),
-            sys121.A.dot(x).reshape((-1,)) + sys121.B.dot(u).reshape((-1,)))
+            (sys121.A @ x).reshape((-1,)) + (sys121.B @ uref).reshape((-1,)))
         assert_array_almost_equal(
             sys121.output(0, x, u),
-            sys121.C.dot(x).reshape((-1,)) + sys121.D.dot(u).reshape((-1,)))
+            (sys121.C @ x).reshape((-1,)) + (sys121.D @ uref).reshape((-1,)))
         assert_array_almost_equal(
             sys121.dynamics(0, x),
-            sys121.A.dot(x).reshape((-1,)))
+            (sys121.A @ x).reshape((-1,)))
         assert_array_almost_equal(
             sys121.output(0, x),
-            sys121.C.dot(x).reshape((-1,)))
+            (sys121.C @ x).reshape((-1,)))
 
     # too few and too many states and inputs
     @pytest.mark.parametrize('x', [0, 1, [], [1, 2, 3], np.atleast_1d(2)])
@@ -801,16 +815,16 @@ class TestStateSpace:
     def test_dynamics_and_output_mimo(self, x, u, sys222):
         assert_array_almost_equal(
             sys222.dynamics(0, x, u),
-            sys222.A.dot(x).reshape((-1,)) + sys222.B.dot(u).reshape((-1,)))
+            (sys222.A @ x).reshape((-1,)) + (sys222.B @ u).reshape((-1,)))
         assert_array_almost_equal(
             sys222.output(0, x, u),
-            sys222.C.dot(x).reshape((-1,)) + sys222.D.dot(u).reshape((-1,)))
+            (sys222.C @ x).reshape((-1,)) + (sys222.D @ u).reshape((-1,)))
         assert_array_almost_equal(
             sys222.dynamics(0, x),
-            sys222.A.dot(x).reshape((-1,)))
+            (sys222.A @ x).reshape((-1,)))
         assert_array_almost_equal(
             sys222.output(0, x),
-            sys222.C.dot(x).reshape((-1,)))
+            (sys222.C @ x).reshape((-1,)))
 
     # too few and too many states and inputs
     @pytest.mark.parametrize('x', [0, 1, [1, 1, 1]])
@@ -851,7 +865,7 @@ class TestRss:
     def test_pole(self, states, outputs, inputs):
         """Test that the poles of rss outputs have a negative real part."""
         sys = rss(states, outputs, inputs)
-        p = sys.pole()
+        p = sys.poles()
         for z in p:
             assert z.real < 0
 
@@ -903,7 +917,7 @@ class TestDrss:
     def test_pole(self, states, outputs, inputs):
         """Test that the poles of drss outputs have less than unit magnitude."""
         sys = drss(states, outputs, inputs)
-        p = sys.pole()
+        p = sys.poles()
         for z in p:
             assert abs(z) < 1
 
@@ -1096,3 +1110,51 @@ def test_latex_repr_testsize(editsdefaults):
     gstatic = ss([], [], [], 1)
     assert gstatic._repr_latex_() is None
 
+
+class TestLinfnorm:
+    # these are simple tests; we assume ab13dd is correct
+    # python-control specific behaviour is:
+    #   - checking for continuous- and discrete-time
+    #   - scaling fpeak for discrete-time
+    #   - handling static gains
+
+    # the underdamped gpeak and fpeak are found from
+    #   gpeak = 1/(2*zeta*(1-zeta**2)**0.5)
+    #   fpeak = wn*(1-2*zeta**2)**0.5
+    @pytest.fixture(params=[
+        ('static', ct.tf, ([1.23],[1]), 1.23, 0),
+        ('underdamped', ct.tf, ([100],[1, 2*0.5*10, 100]), 1.1547005, 7.0710678),
+        ])
+    def ct_siso(self, request):
+        name, systype, sysargs, refgpeak, reffpeak = request.param
+        return systype(*sysargs), refgpeak, reffpeak
+
+    @pytest.fixture(params=[
+        ('underdamped', ct.tf, ([100],[1, 2*0.5*10, 100]), 1e-4, 1.1547005, 7.0710678),
+        ])
+    def dt_siso(self, request):
+        name, systype, sysargs, dt, refgpeak, reffpeak = request.param
+        return ct.c2d(systype(*sysargs), dt), refgpeak, reffpeak
+
+    @slycotonly
+    def test_linfnorm_ct_siso(self, ct_siso):
+        sys, refgpeak, reffpeak = ct_siso
+        gpeak, fpeak = linfnorm(sys)
+        np.testing.assert_allclose(gpeak, refgpeak)
+        np.testing.assert_allclose(fpeak, reffpeak)
+
+    @slycotonly
+    def test_linfnorm_dt_siso(self, dt_siso):
+        sys, refgpeak, reffpeak = dt_siso
+        gpeak, fpeak = linfnorm(sys)
+        # c2d pole-mapping has round-off
+        np.testing.assert_allclose(gpeak, refgpeak)
+        np.testing.assert_allclose(fpeak, reffpeak)
+
+    @slycotonly
+    def test_linfnorm_ct_mimo(self, ct_siso):
+        siso, refgpeak, reffpeak = ct_siso
+        sys = ct.append(siso, siso)
+        gpeak, fpeak = linfnorm(sys)
+        np.testing.assert_allclose(gpeak, refgpeak)
+        np.testing.assert_allclose(fpeak, reffpeak)

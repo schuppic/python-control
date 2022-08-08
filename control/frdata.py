@@ -35,7 +35,6 @@
 # Author: M.M. (Rene) van Paassen (using xferfcn.py as basis)
 # Date: 02 Oct 12
 
-from __future__ import division
 
 """
 Frequency response data representation and functions.
@@ -45,12 +44,17 @@ FRD data.
 """
 
 # External function declarations
+from copy import copy
 from warnings import warn
+
 import numpy as np
 from numpy import angle, array, empty, ones, \
-    real, imag, absolute, eye, linalg, where, dot, sort
+    real, imag, absolute, eye, linalg, where, sort
 from scipy.interpolate import splprep, splev
+
 from .lti import LTI, _process_frequency_response
+from .exception import pandas_check
+from .namedio import NamedIOSystem, _process_namedio_keywords
 from . import config
 
 __all__ = ['FrequencyResponseData', 'FRD', 'frd']
@@ -140,19 +144,22 @@ class FrequencyResponseData(LTI):
         The default constructor is FRD(d, w), where w is an iterable of
         frequency points, and d is the matching frequency data.
 
-        If d is a single list, 1d array, or tuple, a SISO system description
+        If d is a single list, 1D array, or tuple, a SISO system description
         is assumed. d can also be
 
         To call the copy constructor, call FRD(sys), where sys is a
         FRD object.
 
         To construct frequency response data for an existing LTI
-        object, other than an FRD, call FRD(sys, omega)
+        object, other than an FRD, call FRD(sys, omega).
 
         """
         # TODO: discrete-time FRD systems?
-        smooth = kwargs.get('smooth', False)
+        smooth = kwargs.pop('smooth', False)
 
+        #
+        # Process positional arguments
+        #
         if len(args) == 2:
             if not isinstance(args[0], FRD) and isinstance(args[0], LTI):
                 # not an FRD, but still a system, second argument should be
@@ -169,13 +176,12 @@ class FrequencyResponseData(LTI):
 
             else:
                 # The user provided a response and a freq vector
-                self.fresp = array(args[0], dtype=complex)
-                if len(self.fresp.shape) == 1:
-                    self.fresp = self.fresp.reshape(1, 1, len(args[0]))
-                self.omega = array(args[1], dtype=float)
-                if len(self.fresp.shape) != 3 or \
-                        self.fresp.shape[-1] != self.omega.shape[-1] or \
-                        len(self.omega.shape) != 1:
+                self.fresp = array(args[0], dtype=complex, ndmin=1)
+                if self.fresp.ndim == 1:
+                    self.fresp = self.fresp.reshape(1, 1, -1)
+                self.omega = array(args[1], dtype=float, ndmin=1)
+                if self.fresp.ndim != 3 or self.omega.ndim != 1 or \
+                        self.fresp.shape[-1] != self.omega.shape[-1]:
                     raise TypeError(
                         "The frequency data constructor needs a 1-d or 3-d"
                         " response data array and a matching frequency vector"
@@ -193,6 +199,29 @@ class FrequencyResponseData(LTI):
             raise ValueError(
                 "Needs 1 or 2 arguments; received %i." % len(args))
 
+        #
+        # Process key word arguments
+        #
+        # Keep track of return type
+        self.return_magphase=kwargs.pop('return_magphase', False)
+        if self.return_magphase not in (True, False):
+            raise ValueError("unknown return_magphase value")
+
+        # Determine whether to squeeze the output
+        self.squeeze=kwargs.pop('squeeze', None)
+        if self.squeeze not in (None, True, False):
+            raise ValueError("unknown squeeze value")
+
+        # Process namedio keywords
+        defaults = {
+            'inputs': self.fresp.shape[1], 'outputs': self.fresp.shape[0]}
+        name, inputs, outputs, states, dt = _process_namedio_keywords(
+                kwargs, defaults, end=True)
+
+        # Process signal names
+        NamedIOSystem.__init__(
+            self, name=name, inputs=inputs, outputs=outputs, dt=dt)
+
         # create interpolation functions
         if smooth:
             self.ifunc = empty((self.fresp.shape[0], self.fresp.shape[1]),
@@ -205,7 +234,29 @@ class FrequencyResponseData(LTI):
                         w=1.0/(absolute(self.fresp[i, j, :]) + 0.001), s=0.0)
         else:
             self.ifunc = None
-        LTI.__init__(self, self.fresp.shape[1], self.fresp.shape[0])
+
+    #
+    # Frequency response properties
+    #
+    # Different properties of the frequency response that can be used for
+    # analysis and characterization.
+    #
+
+    @property
+    def magnitude(self):
+        return np.abs(self.fresp)
+
+    @property
+    def phase(self):
+        return np.angle(self.fresp)
+
+    @property
+    def frequency(self):
+        return self.omega
+
+    @property
+    def response(self):
+        return self.fresp
 
     def __str__(self):
         """String representation of the transfer function."""
@@ -308,7 +359,7 @@ class FrequencyResponseData(LTI):
         fresp = empty((outputs, inputs, len(self.omega)),
                       dtype=self.fresp.dtype)
         for i in range(len(self.omega)):
-            fresp[:, :, i] = dot(self.fresp[:, :, i], other.fresp[:, :, i])
+            fresp[:, :, i] = self.fresp[:, :, i] @ other.fresp[:, :, i]
         return FRD(fresp, self.omega,
                    smooth=(self.ifunc is not None) and
                           (other.ifunc is not None))
@@ -339,7 +390,7 @@ class FrequencyResponseData(LTI):
         fresp = empty((outputs, inputs, len(self.omega)),
                       dtype=self.fresp.dtype)
         for i in range(len(self.omega)):
-            fresp[:, :, i] = dot(other.fresp[:, :, i], self.fresp[:, :, i])
+            fresp[:, :, i] = other.fresp[:, :, i] @ self.fresp[:, :, i]
         return FRD(fresp, self.omega,
                    smooth=(self.ifunc is not None) and
                           (other.ifunc is not None))
@@ -471,7 +522,7 @@ class FrequencyResponseData(LTI):
 
         return _process_frequency_response(self, omega, out, squeeze=squeeze)
 
-    def __call__(self, s, squeeze=None):
+    def __call__(self, s=None, squeeze=None, return_magphase=None):
         """Evaluate system's transfer function at complex frequencies.
 
         Returns the complex frequency response `sys(s)` of system `sys` with
@@ -484,16 +535,30 @@ class FrequencyResponseData(LTI):
         For a frequency response data object, the argument must be an
         imaginary number (since only the frequency response is defined).
 
+        If ``s`` is not given, this function creates a copy of a frequency
+        response data object with a different set of output settings.
+
         Parameters
         ----------
         s : complex scalar or 1D array_like
-            Complex frequencies
-        squeeze : bool, optional (default=True)
+            Complex frequencies.  If not specified, return a copy of the
+            frequency response data object with updated settings for output
+            processing (``squeeze``, ``return_magphase``).
+
+        squeeze : bool, optional
             If squeeze=True, remove single-dimensional entries from the shape
             of the output even if the system is not SISO. If squeeze=False,
             keep all indices (output, input and, if omega is array_like,
             frequency) even if the system is SISO. The default value can be
             set using config.defaults['control.squeeze_frequency_response'].
+
+        return_magphase : bool, optional
+            If True, then a frequency response data object will enumerate as a
+            tuple of the form (mag, phase, omega) where where ``mag`` is the
+            magnitude (absolute value, not dB or log10) of the system
+            frequency response, ``phase`` is the wrapped phase in radians of
+            the system frequency response, and ``omega`` is the (sorted)
+            frequencies at which the response was evaluated.
 
         Returns
         -------
@@ -513,6 +578,17 @@ class FrequencyResponseData(LTI):
             frequency values.
 
         """
+        if s is None:
+            # Create a copy of the response with new keywords
+            response = copy(self)
+
+            # Update any keywords that we were passed
+            response.squeeze = self.squeeze if squeeze is None else squeeze
+            response.return_magphase = self.return_magphase \
+                if return_magphase is None else return_magphase
+
+            return response
+
         # Make sure that we are operating on a simple list
         if len(np.atleast_1d(s).shape) > 1:
             raise ValueError("input list must be 1D")
@@ -573,20 +649,15 @@ class FrequencyResponseData(LTI):
         if (self.noutputs != other.ninputs or self.ninputs != other.noutputs):
             raise ValueError(
                 "FRD.feedback, inputs/outputs mismatch")
-        fresp = empty((self.noutputs, self.ninputs, len(other.omega)),
-                      dtype=complex)
-        # TODO: vectorize this
+
         # TODO: handle omega re-mapping
-        # TODO: is there a reason to use linalg.solve instead of linalg.inv?
-        # https://github.com/python-control/python-control/pull/314#discussion_r294075154
-        for k, w in enumerate(other.omega):
-            fresp[:, :, k] = np.dot(
-                self.fresp[:, :, k],
-                linalg.solve(
-                    eye(self.ninputs)
-                    + np.dot(other.fresp[:, :, k], self.fresp[:, :, k]),
-                    eye(self.ninputs))
-            )
+
+        # reorder array axes in order to leverage numpy broadcasting
+        myfresp = np.moveaxis(self.fresp, 2, 0)
+        otherfresp = np.moveaxis(other.fresp, 2, 0)
+        I_AB = eye(self.ninputs)[np.newaxis, :, :] + otherfresp @ myfresp
+        resfresp = (myfresp @ linalg.inv(I_AB))
+        fresp = np.moveaxis(resfresp, 0, 2)
 
         return FRD(fresp, other.omega, smooth=(self.ifunc is not None))
 
@@ -710,8 +781,6 @@ class FrequencyResponseData(LTI):
 # FrequenceResponseData and then assigning FRD to point to the same object
 # fixes this problem.
 #
-
-
 FRD = FrequencyResponseData
 
 

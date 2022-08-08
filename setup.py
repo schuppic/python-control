@@ -16,10 +16,7 @@ Development Status :: 3 - Alpha
 Intended Audience :: Science/Research
 Intended Audience :: Developers
 License :: OSI Approved :: BSD License
-Programming Language :: Python :: 2
-Programming Language :: Python :: 2.7
 Programming Language :: Python :: 3
-Programming Language :: Python :: 3.6
 Programming Language :: Python :: 3.7
 Programming Language :: Python :: 3.8
 Programming Language :: Python :: 3.9
@@ -37,14 +34,19 @@ setup(
     author='Python Control Developers',
     author_email='python-control-developers@lists.sourceforge.net',
     url='http://python-control.org',
+    project_urls={
+        'Source': 'https://github.com/python-control/python-control',
+    },
     description='Python Control Systems Library',
     long_description=long_description,
     packages=find_packages(exclude=['benchmarks']),
     classifiers=[f for f in CLASSIFIERS.split('\n') if f],
     install_requires=['numpy',
-                      'scipy',
+                      'scipy>=1.3',
                       'matplotlib'],
     extras_require={
        'test': ['pytest', 'pytest-timeout'],
+       'slycot': [ 'slycot>=0.4.0' ],
+       'cvxopt': [ 'cvxopt>=1.2.0' ]
     }
 )

@@ -55,7 +55,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from numpy import array, poly1d, row_stack, zeros_like, real, imag
 import scipy.signal             # signal processing toolbox
-from .lti import isdtime
+from .namedio import isdtime
 from .xferfcn import _convert_to_transfer_function
 from .exception import ControlMIMONotImplemented
 from .sisotool import _SisotoolUpdate
@@ -114,6 +114,14 @@ def root_locus(sys, kvect=None, xlim=None, ylim=None,
         Computed root locations, given as a 2D array
     klist : ndarray or list
         Gains used.  Same as klist keyword argument if provided.
+
+    Notes
+    -----
+    The root_locus function calls matplotlib.pyplot.axis('equal'), which
+    means that trying to reset the axis limits may not behave as expected.
+    To change the axis limits, use matplotlib.pyplot.gca().axis('auto') and
+    then set the axis limits to the desired values.
+
     """
     # Check to see if legacy 'Plot' keyword was used
     if 'Plot' in kwargs:
@@ -160,6 +168,10 @@ def root_locus(sys, kvect=None, xlim=None, ylim=None,
     # Check for sisotool mode
     sisotool = False if 'sisotool' not in kwargs else True
 
+    # Make sure there were no extraneous keywords
+    if not sisotool and kwargs:
+        raise TypeError("unrecognized keywords: ", str(kwargs))
+
     # Create the Plot
     if plot:
         if sisotool:
@@ -168,8 +180,8 @@ def root_locus(sys, kvect=None, xlim=None, ylim=None,
         else:
             if ax is None:
                 ax = plt.gca()
-                fig = ax.figure
-                ax.set_title('Root Locus')
+            fig = ax.figure
+            ax.set_title('Root Locus')
 
         if print_gain and not sisotool:
             fig.canvas.mpl_connect(
@@ -180,7 +192,7 @@ def root_locus(sys, kvect=None, xlim=None, ylim=None,
             fig.axes[1].plot(
                 [root.real for root in start_mat],
                 [root.imag for root in start_mat],
-                marker='s', markersize=8, zorder=20, label='gain_point')
+                marker='s', markersize=6, zorder=20, color='k', label='gain_point')
             s = start_mat[0][0]
             if isdtime(sys, strict=True):
                 zeta = -np.cos(np.angle(np.log(s)))
@@ -188,7 +200,7 @@ def root_locus(sys, kvect=None, xlim=None, ylim=None,
                 zeta = -1 * s.real / abs(s)
             fig.suptitle(
                 "Clicked at: %10.4g%+10.4gj  gain: %10.4g  damp: %10.4g" %
-                (s.real, s.imag, 1, zeta),
+                (s.real, s.imag, kvect[0], zeta),
                 fontsize=12 if int(mpl.__version__[0]) == 1 else 10)
             fig.canvas.mpl_connect(
                 'button_release_event',
@@ -623,7 +635,7 @@ def _RLFeedbackClicksPoint(event, sys, fig, ax_rlocus, sisotool=False):
             ax_rlocus.plot(
                 [root.real for root in mymat],
                 [root.imag for root in mymat],
-                marker='s', markersize=8, zorder=20, label='gain_point')
+                marker='s', markersize=6, zorder=20, label='gain_point', color='k')
         else:
             ax_rlocus.plot(s.real, s.imag, 'k.', marker='s', markersize=8,
                            zorder=20, label='gain_point')
@@ -769,7 +781,7 @@ def _default_wn(xloc, yloc, max_lines=7):
 
     """
     sep = xloc[1]-xloc[0]       # separation between x-ticks
-    
+
     # Decide whether to use the x or y axis for determining wn
     if yloc[-1] / sep > max_lines*10:
         # y-axis scale >> x-axis scale
