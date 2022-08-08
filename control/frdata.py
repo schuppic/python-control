@@ -603,8 +603,20 @@ class FrequencyResponseData(LTI):
         else:
             return self.eval(complex(s).imag, squeeze=squeeze)
 
+    # Implement iter to allow assigning to a tuple
+    def __iter__(self):
+        fresp = _process_frequency_response(
+            self, self.omega, self.fresp, squeeze=self.squeeze)
+        if not self.return_magphase:
+            return iter((self.omega, fresp))
+        return iter((np.abs(fresp), np.angle(fresp), self.omega))
+
     def __getitem__(self, key):
-        key1, key2 = key
+        try:
+            key1, key2 = key
+        except TypeError:
+            # Implement (thin) getitem to allow access via legacy indexing
+            return list(self.__iter__())[index]
 
         def to_list(key, nmax):
             # pre-process
